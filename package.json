@@ -1,0 +1,17 @@
+{
+  "name": "specifica-br",
+  "version": "1.0.0",
+  "description": "Ferramenta de automação para desenvolvimento guiado por especificações (SDD) com IA. Otimizado para o ecossistema brasileiro.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "fs-extra": "^11.3.3"
+  }
+}
