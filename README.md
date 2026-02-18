@@ -20,13 +20,13 @@ Spec Driven Development é uma metodologia de desenvolvimento que prioriza a doc
 Para instalar o Specifica-BR como uma ferramenta CLI global:
 
 ```bash
-npm install -g especifica-br
+npm install -g specifica-br
 ```
 
 Para usar como uma ferramenta local no projeto:
 
 ```bash
-npm install --save-dev especifica-br
+npm install --save-dev specifica-br
 ```
 
 ## Comandos Básicos
