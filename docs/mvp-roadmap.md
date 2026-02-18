@@ -11,7 +11,7 @@ Este projeto tem como objetivo reduzir o tempo de setup de workflows de desenvol
 Criar um pacote npm global que inicializa projetos focados em OpenCode e GLM 4.7 Coding Plan.
 
 **Features:**
-- Comando `specifica init` para inicializar um projeto
+- Comando `specifica-br init` para inicializar um projeto
 - Cópia dos arquivos de comandos para `.opencode/commands/`
 - Criação do diretório `/specs/templates/` com templates `.md`
 - Recursos básicos do pacote npm:
@@ -21,14 +21,14 @@ Criar um pacote npm global que inicializa projetos focados em OpenCode e GLM 4.7
   - `version`: Exibe versão atual
 
 **Requisitos:**
-- Pacote instalável globalmente via `npm install -g especifica-br`
+- Pacote instalável globalmente via `npm install -g specifica-br`
 - Seguir recomendações de estrutura de diretórios do OpenCode
 - Suportar projetos que utilizam GLM 4.7 Coding Plan
 
 **Exemplo de uso:**
 ```bash
-npm install -g especifica-br
-specifica init
+npm install -g specifica-br
+specifica-br init
 # Cria estrutura:
 # .opencode/commands/
 # specs/templates/
@@ -43,7 +43,7 @@ specifica init
 Adicionar flexibilidade para que o usuário possa personalizar o local onde os comandos serão instalados.
 
 **Features:**
-- Prompt interativo no comando `specifica init` com duas opções:
+- Prompt interativo no comando `specifica-br init` com duas opções:
   - **Configuração Padrão (Boilerplate)**: Seguir estrutura recomendada (`.opencode/commands/` + `/specs/templates/`)
   - **Custom Path**: Informar caminho relativo para os comandos
 - Quando custom path for escolhido:
@@ -57,7 +57,7 @@ Adicionar flexibilidade para que o usuário possa personalizar o local onde os c
 
 **Exemplo de uso:**
 ```bash
-specifica init
+specifica-br init
 # Prompt: Escolha o modo de configuração:
 # [1] Padrão (Boilerplate)
 # [2] Custom Path
@@ -80,7 +80,7 @@ specifica init
 Expandir o suporte para diferentes ferramentas de IA (OpenCode, Gemini CLI, Cursor).
 
 **Features:**
-- Prompt interativo no comando `specifica init` para seleção de ferramenta
+- Prompt interativo no comando `specifica-br init` para seleção de ferramenta
 - Estrutura de diretórios adaptável conforme ferramenta escolhida:
   - OpenCode → `.opencode/commands/`
   - Cursor → `.cursor/commands/`
@@ -94,7 +94,7 @@ Expandir o suporte para diferentes ferramentas de IA (OpenCode, Gemini CLI, Curs
 
 **Exemplo de uso:**
 ```bash
-specifica init
+specifica-br init
 # Prompt: Selecione a ferramenta:
 # [1] OpenCode
 # [2] Gemini CLI

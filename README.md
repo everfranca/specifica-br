@@ -31,12 +31,12 @@ npm install --save-dev specifica-br
 
 ## Comandos Básicos
 
-### `specifica init`
+### `specifica-br init`
 
 Inicializa a estrutura SDD no projeto atual.
 
 ```bash
-specifica init
+specifica-br init
 ```
 
 **O que faz:**
@@ -47,7 +47,7 @@ specifica init
 
 **Exemplo de uso:**
 ```bash
-$ specifica init
+$ specifica-br init
 Inicializando estrutura Spec Driven Development...
 
 Selecione a ferramenta de IA:
@@ -59,12 +59,12 @@ Selecione o modelo de IA:
 ✓ Estrutura SDD criada com sucesso!
 ```
 
-### `specifica help`
+### `specifica-br help`
 
 Exibe ajuda simplificada dos comandos disponíveis.
 
 ```bash
-specifica help
+specifica-br help
 ```
 
 **O que faz:**
@@ -72,12 +72,12 @@ specifica help
 - Mostra opções globais
 - Sugere uso de `help --completo` para mais detalhes
 
-### `specifica help --completo`
+### `specifica-br help --completo`
 
 Exibe ajuda detalhada com o workflow completo de SDD.
 
 ```bash
-specifica help --completo
+specifica-br help --completo
 ```
 
 **O que faz:**
@@ -93,12 +93,12 @@ specifica help --completo
 4. **Geração de Tarefas:** Decompõe o plano técnico em tarefas executáveis
 5. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação
 
-### `specifica upgrade`
+### `specifica-br upgrade`
 
 Atualiza templates e comandos (em breve).
 
 ```bash
-specifica upgrade
+specifica-br upgrade
 ```
 
 **Nota:** Este comando está em desenvolvimento e estará disponível em uma versão futura.
@@ -110,7 +110,7 @@ O workflow completo de Spec Driven Development é composto por 5 etapas:
 ### 1. Inicialização
 
 ```bash
-specifica init
+specifica-br init
 ```
 
 Cria a estrutura de diretórios e templates no projeto.
@@ -149,7 +149,7 @@ Implementa cada tarefa individualmente seguindo a especificação.
 
 ## Estrutura do Projeto
 
-Após executar `specifica init`, a estrutura do projeto será:
+Após executar `specifica-br init`, a estrutura do projeto será:
 
 ```
 seu-projeto/
@@ -192,12 +192,12 @@ npm start
 
 ## Licença
 
-ISC
+MIT
 
 ## Suporte
 
 Para mais informações, use:
 
 ```bash
-specifica help --completo
+specifica-br help --completo
 ```
