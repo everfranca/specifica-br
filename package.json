@@ -1,17 +1,49 @@
 {
   "name": "specifica-br",
-  "version": "1.0.0",
-  "description": "Ferramenta de automação para desenvolvimento guiado por especificações (SDD) com IA. Otimizado para o ecossistema brasileiro.",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "version": "1.0.1",
+  "description": "Ferramenta de automação para desenvolvimento guiado por especificações (Spec Driven Development - SDD) com IA. Otimizado para o ecossistema brasileiro.",
+  "main": "dist/index.js",
+  "bin": {
+    "specifica-br": "./dist/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "scripts": {
+    "build": "tsc && npm run copy:assets",
+    "copy:assets": "npx copyfiles -u 2 \"src/assets/**/*\" dist",
+    "start": "node dist/index.js",
+    "dev": "tsc && npm run copy:assets && node dist/index.js"
+  },
+  "keywords": [
+    "spec driven development",
+    "SSD",
+    "spec",
+    "especificar",
+    "ai",
+    "ia",
+    "spec-driven-development",
+    "automation",
+    "opencode",
+    "brazil",
+    "brasil"
+  ],
+  "author": "Éverton França <everfranca@gmail.com> (https://github.com/everfranca)",
+  "license": "MIT",
+  "files": [
+    "dist/**/*",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "chalk": "^5.6.2",
+    "@types/prompts": "^2.4.9",
+    "chalk": "^4.1.2",
     "commander": "^14.0.3",
-    "fs-extra": "^11.3.3"
+    "fs-extra": "^11.3.3",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.2.3",
+    "copyfiles": "^2.4.1",
+    "typescript": "^5.3.3"
   }
 }
