@@ -65,7 +65,7 @@ function runHelpCommand(options: { completo?: boolean }): void {
 }
 
 async function wrappedRunHelpCommand(options: { completo?: boolean }): Promise<void> {
-  await updateNotifierMiddleware.wrap('help', () => runHelpCommand(options));
+  await updateNotifierMiddleware.wrap('help', async () => { runHelpCommand(options); });
 }
 
 /**

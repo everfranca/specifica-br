@@ -60,4 +60,5 @@ class LogService {
   }
 }
 
+export { LogService };
 export const logService = new LogService();

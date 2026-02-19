@@ -1,3 +1,4 @@
 {
-  "enabledUpgradeCommands": ["init", "help", "upgrade"]
+  "enabledUpgradeCommands": ["init", "help", "upgrade"],
+  "versionCheckTimeoutMs": 1500
 }

@@ -49,4 +49,5 @@ class SettingsService {
   }
 }
 
+export { SettingsService };
 export const settingsService = new SettingsService();
