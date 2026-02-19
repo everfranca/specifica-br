@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { updateNotifierMiddleware } from '../utils/update-notifier-middleware.js';
 
 /**
  * Exibe o workflow completo de Spec Driven Development (SDD).
@@ -63,10 +64,14 @@ function runHelpCommand(options: { completo?: boolean }): void {
   }
 }
 
+async function wrappedRunHelpCommand(options: { completo?: boolean }): Promise<void> {
+  await updateNotifierMiddleware.wrap('help', () => runHelpCommand(options));
+}
+
 /**
  * Exporta o comando help configurado para uso no Commander.js.
  */
 export const helpCommand = new Command('help')
   .description('Exibe ajuda dos comandos disponíveis')
   .option('--completo', 'Exibe ajuda detalhada com workflow completo')
-  .action(runHelpCommand);
+  .action(wrappedRunHelpCommand);

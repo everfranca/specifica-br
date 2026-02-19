@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 import prompts from 'prompts';
-import { InitAnswers } from '../types/init';
-import { createDirectories, copyTemplates } from '../utils/file-service';
-import { showSuccessMessage, showMissionMessage, showErrorMessage, showInfoMessage } from '../utils/message-formatter';
+import { InitAnswers } from '../types/init.js';
+import { createDirectories, copyTemplates } from '../utils/file-service.js';
+import { showSuccessMessage, showMissionMessage, showErrorMessage, showInfoMessage } from '../utils/message-formatter.js';
+import { updateNotifierMiddleware } from '../utils/update-notifier-middleware.js';
 
 async function runInitCommand(): Promise<void> {
   console.log('');
@@ -59,8 +60,6 @@ async function runInitCommand(): Promise<void> {
     showSuccessMessage();
 
     showMissionMessage();
-
-    process.exit(0);
   } catch (error) {
     if (error instanceof Error) {
       showErrorMessage(error.message);
@@ -71,6 +70,10 @@ async function runInitCommand(): Promise<void> {
   }
 }
 
+async function wrappedRunInitCommand(): Promise<void> {
+  await updateNotifierMiddleware.wrap('init', runInitCommand);
+}
+
 export const initCommand = new Command('init')
   .description('Inicializa estrutura SDD no projeto atual')
-  .action(runInitCommand);
+  .action(wrappedRunInitCommand);

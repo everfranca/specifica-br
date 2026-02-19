@@ -2,24 +2,27 @@
   "name": "specifica-br",
   "version": "1.0.2",
   "description": "Ferramenta de automação para desenvolvimento guiado por especificações (Spec Driven Development - SDD) com IA. Otimizado para o ecossistema brasileiro.",
+  "type": "module",
   "main": "dist/index.js",
   "bin": {
     "specifica-br": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc && npm run copy:assets",
+    "build": "tsc && npm run copy:assets && npm run add:shebang",
     "copy:assets": "npx copyfiles -u 2 \"src/assets/**/*\" dist",
+    "add:shebang": "sed -i '1i#!/usr/bin/env node' dist/index.js",
     "start": "node dist/index.js",
-    "dev": "tsc && npm run copy:assets && node dist/index.js"
+    "dev": "tsc && npm run copy:assets && npm run add:shebang && node dist/index.js"
   },
   "keywords": [
     "spec driven development",
+    "spec-driven-development",
+    "spec-driven",
     "SSD",
     "spec",
     "especificar",
     "ai",
     "ia",
-    "spec-driven-development",
     "automation",
     "opencode",
     "brazil",
@@ -38,11 +41,14 @@
     "chalk": "^4.1.2",
     "commander": "^14.0.3",
     "fs-extra": "^11.3.3",
-    "prompts": "^2.4.2"
+    "latest-version": "^9.0.0",
+    "prompts": "^2.4.2",
+    "semver": "^7.7.4"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.2.3",
+    "@types/semver": "^7.7.1",
     "copyfiles": "^2.4.1",
     "typescript": "^5.3.3"
   }

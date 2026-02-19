@@ -95,13 +95,224 @@ specifica-br help --completo
 
 ### `specifica-br upgrade`
 
-Atualiza templates e comandos (em breve).
+Atualiza a CLI para a versão mais recente do NPM.
 
 ```bash
 specifica-br upgrade
 ```
 
-**Nota:** Este comando está em desenvolvimento e estará disponível em uma versão futura.
+#### Requisitos
+
+- **npm instalado:** O comando npm deve estar disponível no sistema
+- **Permissões:** Dependendo do sistema operacional, pode ser necessário executar com permissões elevadas
+
+#### Instruções por Plataforma
+
+**Windows:**
+
+- Execute o comando normalmente
+- Se receber erro de permissão, clique com botão direito no terminal/CMD e selecione "Executar como administrador"
+- Alternativamente, abra PowerShell como administrador e execute o comando
+
+**Linux:**
+
+- Execute o comando normalmente
+- Se receber erro de permissão, use `sudo`:
+  ```bash
+  sudo specifica-br upgrade
+  ```
+
+**MacOS:**
+
+- Execute o comando normalmente
+- Se receber erro de permissão, use `sudo`:
+  ```bash
+  sudo specifica-br upgrade
+  ```
+
+#### Exemplos
+
+**Atualização bem-sucedida:**
+
+```bash
+$ specifica-br upgrade
+
+Verificando instalação do npm...
+
+✓ npm encontrado.
+
+Atualizando specifica-br para a versão mais recente...
+Executando: npm i -g specifica-br@latest
+
+[output do npm]
+
+✓ specifica-br atualizado com sucesso!
+```
+
+**Erro de permissão no Windows:**
+
+```bash
+$ specifica-br upgrade
+
+✗ Permissão negada.
+Execute como administrador (clique com botão direito > Executar como administrador)
+```
+
+**Erro de permissão no Linux/MacOS:**
+
+```bash
+$ specifica-br upgrade
+
+✗ Permissão negada.
+Execute: sudo specifica-br upgrade
+```
+
+**npm não encontrado:**
+
+```bash
+$ specifica-br upgrade
+
+✗ npm não encontrado.
+Instale Node.js e npm em: https://nodejs.org
+```
+
+#### Logs
+
+Em caso de erro, um log detalhado será gerado no diretório `/logs` do pacote, com formato `log_yyyy_MM_dd_hh_mm_ss.txt`. O caminho completo do log será exibido na mensagem de erro.
+
+**Caminhos de Log por Plataforma:**
+
+- **Windows:** `C:\Users\[usuario]\AppData\Roaming\npm\node_modules\specifica-br\logs\log_2026_02_18_14_30_15.txt`
+- **Linux/MacOS:** `/usr/local/lib/node_modules/specifica-br/logs/log_2026_02_18_14_30_15.txt` (ou caminho semelhante, dependendo da instalação)
+
+## Sistema de Notificações de Atualização
+
+A CLI `specifica-br` verifica automaticamente se há atualizações disponíveis no NPM durante a execução dos comandos habilitados.
+
+### Como Funciona
+
+1. Ao executar um comando habilitado (ex: `init`, `help`, `upgrade`), a CLI verifica se existe uma versão mais recente no NPM
+2. A verificação é assíncrona e não afeta o tempo de execução do comando
+3. Se uma nova versão estiver disponível, uma notificação será exibida ao final do output
+4. Funciona em Windows, Linux e MacOS
+
+### Notificação de Atualização
+
+Quando uma nova versão estiver disponível, você verá uma mensagem como esta:
+
+```
+ Update disponível 
+
+1.0.0 → 1.1.0
+
+Run specifica-br upgrade (em algum projeto)
+Run npm i -g specifica-br para atualizar
+```
+
+### Comandos que Exibem Notificações
+
+Por padrão, os seguintes comandos verificam atualizações:
+- `init` - Inicializa estrutura SDD
+- `help` - Exibe informações de ajuda
+- `upgrade` - Atualiza a CLI
+
+**Nota:** A lista de comandos pode ser configurada editando o arquivo `settings.json`.
+
+### Configuração de Comandos Habilitados
+
+Você pode configurar quais comandos da CLI devem verificar atualizações editando o arquivo de configuração.
+
+#### Arquivo de Configuração
+
+O arquivo `settings.json` está localizado no diretório `assets` do pacote.
+
+**Caminho por Plataforma:**
+
+- **Desenvolvimento:** `src/assets/settings.json` (no diretório do projeto)
+- **Instalação Global:**
+  - **Windows:** `C:\Users\[usuario]\AppData\Roaming\npm\node_modules\specifica-br\dist\assets\settings.json`
+  - **Linux:** `/usr/local/lib/node_modules/specifica-br/dist/assets/settings.json`
+  - **MacOS:** `/usr/local/lib/node_modules/specifica-br/dist/assets/settings.json`
+
+#### Estrutura do Arquivo
+
+```json
+{
+  "enabledUpgradeCommands": ["init", "help", "upgrade"]
+}
+```
+
+#### Modificando a Configuração
+
+**Para habilitar verificação em um comando:**
+
+Adicione o nome do comando ao array `enabledUpgradeCommands`:
+
+```json
+{
+  "enabledUpgradeCommands": ["init", "help", "upgrade", "generate"]
+}
+```
+
+**Para desabilitar verificação em um comando:**
+
+Remova o nome do comando do array `enabledUpgradeCommands`:
+
+```json
+{
+  "enabledUpgradeCommands": ["init", "help"]
+}
+```
+
+**Para desabilitar todas as verificações:**
+
+Use um array vazio:
+
+```json
+{
+  "enabledUpgradeCommands": []
+}
+```
+
+#### Editando o Arquivo de Configuração
+
+**Windows (PowerShell):**
+```powershell
+notepad "C:\Users\[usuario]\AppData\Roaming\npm\node_modules\specifica-br\dist\assets\settings.json"
+```
+
+**Windows (CMD):**
+```cmd
+notepad "C:\Users\[usuario]\AppData\Roaming\npm\node_modules\specifica-br\dist\assets\settings.json"
+```
+
+**Linux/MacOS (Nano):**
+```bash
+nano /usr/local/lib/node_modules/specifica-br/dist/assets/settings.json
+```
+
+**Linux/MacOS (Vim):**
+```bash
+vi /usr/local/lib/node_modules/specifica-br/dist/assets/settings.json
+```
+
+**Nota:** Dependendo de como o npm está configurado, o caminho de instalação pode variar. Execute `npm root -g` para verificar o caminho global de node_modules no seu sistema.
+
+#### Fallback
+
+Se o arquivo `settings.json` não for encontrado ou estiver inválido, a CLI usará a configuração padrão:
+```json
+{
+  "enabledUpgradeCommands": ["init", "help", "upgrade"]
+}
+```
+
+### Compatibilidade
+
+Este sistema funciona nativamente em todos os sistemas operacionais:
+- ✅ Windows (10, 11)
+- ✅ Linux (Ubuntu, Debian, Fedora, etc.)
+- ✅ MacOS (todas as versões suportadas pelo Node.js)
 
 ## Workflow SDD Completo
 

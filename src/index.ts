@@ -1,11 +1,12 @@
-#!/usr/bin/env node
 import { Command } from 'commander';
 import fs from 'fs-extra';
 import path from 'path';
-import { initCommand } from './commands/init';
-import { helpCommand } from './commands/help';
-import { upgradeCommand } from './commands/upgrade';
+import { fileURLToPath } from 'url';
+import { initCommand } from './commands/init.js';
+import { helpCommand } from './commands/help.js';
+import { upgradeCommand } from './commands/upgrade.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8')
 );
