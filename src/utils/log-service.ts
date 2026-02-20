@@ -1,10 +1,8 @@
 import fs from 'fs-extra';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { LogEntry } from '../types/settings.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOGS_DIR = path.join(__dirname, '..', '..', 'logs');
+const LOGS_DIR = path.join(process.cwd(), '.specifica-br', 'logs');
 
 class LogService {
   private async ensureLogsDirectoryExists(): Promise<void> {
