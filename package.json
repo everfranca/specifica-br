@@ -1,6 +1,6 @@
 {
   "name": "specifica-br",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Ferramenta de automação para desenvolvimento guiado por especificações (Spec Driven Development - SDD) com IA. Otimizado para o ecossistema brasileiro.",
   "type": "module",
   "main": "dist/index.js",

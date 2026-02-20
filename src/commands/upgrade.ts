@@ -3,10 +3,44 @@ import chalk from 'chalk';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { platform } from 'os';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { logService } from '../utils/log-service.js';
 import { updateNotifierMiddleware } from '../utils/update-notifier-middleware.js';
+import latestVersion from 'latest-version';
+import semver from 'semver';
 
 const execAsync = promisify(exec);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE_JSON_PATH = path.join(__dirname, '..', '..', 'package.json');
+
+async function getCurrentVersion(): Promise<string> {
+  try {
+    const packageJson = JSON.parse(readFileSync(PACKAGE_JSON_PATH, 'utf-8'));
+    return packageJson.version;
+  } catch (error) {
+    throw new Error('Não foi possível ler a versão atual do package.json');
+  }
+}
+
+async function getLatestVersion(packageName: string): Promise<string> {
+  try {
+    const version = await latestVersion(packageName);
+    return version;
+  } catch (error) {
+    const { stdout } = await execAsync(`npm view ${packageName} version`);
+    const version = stdout.trim();
+    return version;
+  }
+}
+
+async function isVersionOutdated(currentVersion: string, remoteVersion: string): Promise<boolean> {
+  if (!semver.valid(currentVersion) || !semver.valid(remoteVersion)) {
+    return false;
+  }
+  return semver.lt(currentVersion, remoteVersion);
+}
 
 function isWindows(): boolean {
   return platform() === 'win32';
@@ -22,25 +56,36 @@ async function checkNpmInstalled(): Promise<boolean> {
 }
 
 async function runUpgradeCommand(): Promise<void> {
-  console.log('');
-  console.log(chalk.cyan('Verificando instalação do npm...'));
-  console.log('');
-
   const npmInstalled = await checkNpmInstalled();
 
   if (!npmInstalled) {
-    console.log('');
     console.log(chalk.red('✗ npm não encontrado.'));
     console.log(chalk.yellow('Instale Node.js e npm em: https://nodejs.org'));
-    console.log('');
     process.exit(1);
   }
 
-  console.log(chalk.green('✓ npm encontrado.'));
-  console.log('');
-  console.log(chalk.cyan('Atualizando specifica-br para a versão mais recente...'));
-  console.log(chalk.gray('Executando: npm i -g specifica-br@latest'));
-  console.log('');
+  console.log(chalk.cyan('Verificando se há atualizações disponíveis...'));
+
+  try {
+    const currentVersion = await getCurrentVersion();
+    const remoteVersion = await getLatestVersion('specifica-br');
+    const outdated = await isVersionOutdated(currentVersion, remoteVersion);
+
+    if (!outdated) {
+      console.log(chalk.green(`specifica-br atualização ignorada: a versão ${currentVersion} já está instalada`));
+      console.log('');
+      process.exit(0);
+    }
+
+    console.log(chalk.cyan('Atualizando specifica-br para a versão mais recente...'));
+    console.log(chalk.gray(`Versão atual: ${currentVersion} → ${remoteVersion}`));
+    console.log(chalk.gray('Executando: npm i -g specifica-br@latest'));
+    console.log('');
+  } catch (error) {
+    console.log('');
+    console.log(chalk.yellow('Aviso: Não foi possível verificar a versão mais recente. Continuando com a atualização...'));
+    console.log('');
+  }
 
   try {
     const { stdout, stderr } = await execAsync('npm i -g specifica-br@latest', {

@@ -40,15 +40,20 @@ specifica-br init
 ```
 
 **O que faz:**
-- Cria os diretórios `.opencode/commands` e `specs/templates`
+- Permite selecionar a convenção de diretórios (OpenCode ou Specifica-BR)
+- Cria os diretórios de comandos e templates baseados na seleção
+- Se OpenCode for selecionado, guia na escolha da ferramenta e modelo de IA
 - Copia os arquivos de templates necessários
-- Guia você na seleção da ferramenta e modelo de IA
 - Exibe informações sobre o workflow SDD
 
 **Exemplo de uso:**
 ```bash
 $ specifica-br init
 Inicializando estrutura Spec Driven Development...
+
+Selecione a convenção de diretórios para comandos:
+❯ Recomendado (OpenCode)
+  Agnóstico (Specifica-BR)
 
 Selecione a ferramenta de IA:
 ❯ OpenCode
@@ -360,11 +365,31 @@ Implementa cada tarefa individualmente seguindo a especificação.
 
 ## Estrutura do Projeto
 
-Após executar `specifica-br init`, a estrutura do projeto será:
+Após executar `specifica-br init`, a estrutura do projeto depende da convenção selecionada:
+
+**Se opção 1 (OpenCode) for selecionada:**
 
 ```
 seu-projeto/
 ├── .opencode/
+│   └── commands/
+│       ├── gerar-prd.md
+│       ├── gerar-techspec.md
+│       ├── gerar-tasks.md
+│       └── executar-task.md
+└── specs/
+    └── templates/
+        ├── prd-template.md
+        ├── techspec-template.md
+        ├── task-template.md
+        └── tasks-template.md
+```
+
+**Se opção 2 (Specifica-BR) for selecionada:**
+
+```
+seu-projeto/
+├── specifica-br/
 │   └── commands/
 │       ├── gerar-prd.md
 │       ├── gerar-techspec.md
