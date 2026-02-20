@@ -3,8 +3,9 @@
  * Representa as escolhas do usuário durante o fluxo interativo.
  */
 export interface InitAnswers {
-  tool: string;
-  model: string;
+  directoryConvention: 'opencode' | 'specifica-br';
+  tool?: string;
+  model?: string;
 }
 
 /**

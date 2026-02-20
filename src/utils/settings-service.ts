@@ -42,11 +42,6 @@ class SettingsService {
 
     return this.cachedSettings.enabledUpgradeCommands.includes(commandName);
   }
-
-  public async refreshCache(): Promise<void> {
-    this.cachedSettings = null;
-    await this.getSettings();
-  }
 }
 
 export { SettingsService };

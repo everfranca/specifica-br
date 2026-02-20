@@ -37,7 +37,7 @@ specifica-br init
 ---
 
 ## MVP 2: Flexibilidade de Configuração (Custom Path)
-- [ ] Release Date: -
+- [X] Release Date: 2026-02-19
 
 **Objetivo:**
 Adicionar flexibilidade para que o usuário possa personalizar o local onde os comandos serão instalados.
@@ -59,7 +59,7 @@ Adicionar flexibilidade para que o usuário possa personalizar o local onde os c
 ```bash
 specifica-br init
 # Prompt: Escolha o modo de configuração:
-# [1] Padrão (Boilerplate)
+# [1] Padrão (Utilizando sua ferramenta como: Claude Code, Cursor, Gemini CLI, OpenCode)
 # [2] Custom Path
 #
 # > 2

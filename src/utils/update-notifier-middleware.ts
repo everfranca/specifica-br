@@ -121,7 +121,7 @@ class UpdateNotifierMiddleware {
       const response = await prompts({
         type: 'confirm',
         name: 'shouldUpdate',
-        message: `Uma nova versão (${latestVersion}) está disponível. Deseja atualizar agora?`,
+        message: `Deseja atualizar para a versão ${latestVersion} agora? (Y=Sim, n=Não)`,
         initial: true
       });
 
@@ -206,27 +206,27 @@ class UpdateNotifierMiddleware {
   }
 
   /**
-   * Gerencia o fluxo completo de atualização
+   * Exibe notificação e prompt interativo para atualização
    * @param latestVersion Versão mais recente disponível
    * @param originalAction Função original a ser executada se recusar atualização
    * @returns Promise<void>
    */
-  private async handleUpdateFlow(latestVersion: string, originalAction: () => Promise<void>): Promise<void> {
-    // Perguntar ao usuário se deseja atualizar
+  private async displayNotificationWithPrompt(latestVersion: string, originalAction: () => Promise<void>): Promise<void> {
+    const currentVersion = this.getCurrentVersion();
+    const type = this.getUpdateType(currentVersion, latestVersion);
+
+    this.displayNotification({
+      name: 'specifica-br',
+      currentVersion,
+      latestVersion,
+      type
+    });
+
     const shouldUpdate = await this.promptUserForUpdate(latestVersion);
-    
-    if (!shouldUpdate) {
-      // Se recusou, executar ação original
-      await originalAction();
-      return;
-    }
-    
-    // Se aceitou, executar atualização
-    try {
+
+    if (shouldUpdate) {
       await this.executeUpdate();
-    } catch (error) {
-      // Em caso de falha na atualização, executar ação original
-      console.log('Continuando com o comando original...');
+    } else {
       await originalAction();
     }
   }
@@ -272,7 +272,7 @@ class UpdateNotifierMiddleware {
       }
 
       // Se chegou aqui, há nova versão disponível - iniciar fluxo de atualização
-      await this.handleUpdateFlow(latestVersion, originalAction);
+      await this.displayNotificationWithPrompt(latestVersion, originalAction);
       
     } catch (error) {
       // Em caso de qualquer erro no fluxo de interceptação, executar ação original
@@ -292,13 +292,8 @@ class UpdateNotifierMiddleware {
     const lines = [
       'Update disponível',
       '',
-      `${name} 🇧🇷`,
-      `${currentVersion} → ${latestVersion}`,
-      '',
-      `Tipo: ${type}`,
-      '',
-      'Run specifica-br upgrade',
-      'Run npm i -g specifica-br para atualizar'
+      name,
+      `${currentVersion} → ${latestVersion}`
     ];
 
     const boxWidth = 60;
@@ -309,31 +304,9 @@ class UpdateNotifierMiddleware {
     
     lines.forEach(line => {
       const content = line.trim() === '' ? '' : line;
-      let visualLength = 0;
-      const hasFlagEmoji = content.includes('🇧🇷');
-      let tempContent = content;
-      
-      if (hasFlagEmoji) {
-        tempContent = content.replace('🇧🇷', '  ');
-      }
-      
-      for (let i = 0; i < tempContent.length; i++) {
-        const char = tempContent[i];
-        const codePoint = char.codePointAt(0) || 0;
-        if (codePoint >= 0x1F1E6 && codePoint <= 0x1F1FF) {
-          visualLength += 2;
-        } else {
-          visualLength += 1;
-        }
-      }
-      
-      if (hasFlagEmoji) {
-        visualLength += 2;
-      }
-      
-      const padding = Math.max(0, boxWidth - visualLength);
+      const padding = Math.max(0, boxWidth - content.length);
       const leftPadding = Math.floor(padding / 2);
-      const rightPadding = hasFlagEmoji ? padding - leftPadding + 2 : padding - leftPadding;
+      const rightPadding = padding - leftPadding;
       const paddedLine = ' '.repeat(leftPadding) + content + ' '.repeat(rightPadding);
       
       console.log(chalk.bgYellow.black('│' + paddedLine + '│'));

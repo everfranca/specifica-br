@@ -1,24 +1,31 @@
 import chalk from 'chalk';
 
-export function showSuccessMessage(): void {
+export function showSuccessMessage(directoryConvention: 'opencode' | 'specifica-br'): void {
+  const commandDir = directoryConvention === 'opencode' 
+    ? '.opencode/commands/' 
+    : 'specifica-br/commands/';
+
   console.log('');
   console.log(chalk.green.bold('✓ Estrutura SDD criada com sucesso!'));
   console.log('');
   console.log(chalk.gray('Diretórios criados:'));
-  console.log(chalk.gray('  - .opencode/commands'));
-  console.log(chalk.gray('  - specs/templates'));
+  console.log(chalk.gray(`  • ${commandDir}`));
+  console.log(chalk.gray('  • specs/templates/'));
   console.log('');
   console.log(chalk.gray('Arquivos de comandos copiados:'));
-  console.log(chalk.gray('  - gerar-prd.md'));
-  console.log(chalk.gray('  - gerar-techspec.md'));
-  console.log(chalk.gray('  - gerar-tasks.md'));
-  console.log(chalk.gray('  - executar-task.md'));
+  console.log(chalk.gray('  • gerar-prd.md'));
+  console.log(chalk.gray('  • gerar-techspec.md'));
+  console.log(chalk.gray('  • gerar-tasks.md'));
+  console.log(chalk.gray('  • executar-task.md'));
   console.log('');
   console.log(chalk.gray('Arquivos de templates copiados:'));
-  console.log(chalk.gray('  - prd-template.md'));
-  console.log(chalk.gray('  - techspec-template.md'));
-  console.log(chalk.gray('  - task-template.md'));
-  console.log(chalk.gray('  - tasks-template.md'));
+  console.log(chalk.gray('  • prd-template.md'));
+  console.log(chalk.gray('  • techspec-template.md'));
+  console.log(chalk.gray('  • task-template.md'));
+  console.log(chalk.gray('  • tasks-template.md'));
+  console.log('');
+  console.log(chalk.gray('Para começar, navegue até o diretório de comandos e execute:'));
+  console.log(chalk.gray(`  cd ${commandDir.split('/')[0]}`));
   console.log('');
 }
 
@@ -45,13 +52,13 @@ export function showMissionMessage(): void {
   console.log(chalk.white('  3. Gere sua Tech Spec baseada no PRD'));
   console.log(chalk.white('  4. Decomponha em tarefas executáveis'));
   console.log('');
-  console.log(chalk.cyan.bold('Comece agora com: specifica help'));
+  console.log(chalk.cyan.bold('Comece agora com o comando: specifica-br help'));
   console.log('');
 }
 
 export function showErrorMessage(message: string): void {
   console.error('');
-  console.error(chalk.red.bold('✗ Erro:'));
+  console.error(chalk.red.bold('Erro:'));
   console.error(chalk.red(message));
   console.error('');
 }

@@ -4,73 +4,77 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createDirectories(): void {
-  const directoriesToCreate = [
-    path.join(process.cwd(), '.opencode', 'commands'),
-    path.join(process.cwd(), 'specs', 'templates')
-  ];
+export class FileService {
+  async createStructure(directoryConvention: 'opencode' | 'specifica-br'): Promise<void> {
+    const commandsDestDir = directoryConvention === 'opencode'
+      ? path.join(process.cwd(), '.opencode', 'commands')
+      : path.join(process.cwd(), 'specifica-br', 'commands');
 
-  directoriesToCreate.forEach((dir) => {
+    console.log(`• Criando diretórios com convenção: ${directoryConvention}`);
+    await this.createDirectories(commandsDestDir, path.join(process.cwd(), 'specs', 'templates'));
+    await this.copyTemplates(commandsDestDir);
+  }
+
+  private async createDirectories(commandsDestDir: string, templatesDestDir: string): Promise<void> {
     try {
-      fs.ensureDirSync(dir);
-      console.log(`Diretório criado: ${dir}`);
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Erro ao criar diretório ${dir}: ${error.message}`);
-      }
-      throw new Error(`Erro ao criar diretório ${dir}`);
-    }
-  });
-}
+      await fs.ensureDir(commandsDestDir);
+      console.log(`✓ Diretório criado: ${commandsDestDir}`);
 
-export function copyTemplates(): void {
-  const distRoot = path.resolve(__dirname, '..');
-  const boilerplateDir = path.join(distRoot, 'boilerplate');
-  
-  const templateFiles = [
-    {
-      source: path.join(boilerplateDir, 'opencode-commands', 'gerar-prd.md'),
-      dest: path.join(process.cwd(), '.opencode', 'commands', 'gerar-prd.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'opencode-commands', 'gerar-techspec.md'),
-      dest: path.join(process.cwd(), '.opencode', 'commands', 'gerar-techspec.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'opencode-commands', 'gerar-tasks.md'),
-      dest: path.join(process.cwd(), '.opencode', 'commands', 'gerar-tasks.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'opencode-commands', 'executar-task.md'),
-      dest: path.join(process.cwd(), '.opencode', 'commands', 'executar-task.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'specs-templates', 'prd-template.md'),
-      dest: path.join(process.cwd(), 'specs', 'templates', 'prd-template.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'specs-templates', 'techspec-template.md'),
-      dest: path.join(process.cwd(), 'specs', 'templates', 'techspec-template.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'specs-templates', 'task-template.md'),
-      dest: path.join(process.cwd(), 'specs', 'templates', 'task-template.md')
-    },
-    {
-      source: path.join(boilerplateDir, 'specs-templates', 'tasks-template.md'),
-      dest: path.join(process.cwd(), 'specs', 'templates', 'tasks-template.md')
-    }
-  ];
-
-  templateFiles.forEach(({ source, dest }) => {
-    try {
-      fs.copySync(source, dest, { overwrite: true });
-      console.log(`Arquivo copiado: ${path.basename(dest)}`);
+      await fs.ensureDir(templatesDestDir);
+      console.log(`✓ Diretório criado: ${templatesDestDir}`);
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(`Erro ao copiar arquivo ${source}: ${error.message}`);
+      if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+        throw new Error('Erro: Sem permissão para criar diretórios.');
       }
-      throw new Error(`Erro ao copiar arquivo ${source}`);
+      throw error;
     }
-  });
+  }
+
+  private async copyTemplates(commandsDestDir: string): Promise<void> {
+    const distRoot = path.resolve(__dirname, '..', 'boilerplate');
+
+    const templateFiles = [
+      {
+        source: path.join(distRoot, 'opencode-commands', 'gerar-prd.md'),
+        dest: path.join(commandsDestDir, 'gerar-prd.md')
+      },
+      {
+        source: path.join(distRoot, 'opencode-commands', 'gerar-techspec.md'),
+        dest: path.join(commandsDestDir, 'gerar-techspec.md')
+      },
+      {
+        source: path.join(distRoot, 'opencode-commands', 'gerar-tasks.md'),
+        dest: path.join(commandsDestDir, 'gerar-tasks.md')
+      },
+      {
+        source: path.join(distRoot, 'opencode-commands', 'executar-task.md'),
+        dest: path.join(commandsDestDir, 'executar-task.md')
+      },
+      {
+        source: path.join(distRoot, 'specs-templates', 'prd-template.md'),
+        dest: path.join(process.cwd(), 'specs', 'templates', 'prd-template.md')
+      },
+      {
+        source: path.join(distRoot, 'specs-templates', 'techspec-template.md'),
+        dest: path.join(process.cwd(), 'specs', 'templates', 'techspec-template.md')
+      },
+      {
+        source: path.join(distRoot, 'specs-templates', 'task-template.md'),
+        dest: path.join(process.cwd(), 'specs', 'templates', 'task-template.md')
+      },
+      {
+        source: path.join(distRoot, 'specs-templates', 'tasks-template.md'),
+        dest: path.join(process.cwd(), 'specs', 'templates', 'tasks-template.md')
+      }
+    ];
+
+    for (const { source, dest } of templateFiles) {
+      if (await fs.pathExists(source)) {
+        await fs.copy(source, dest, { overwrite: true });
+        console.log(`✓ Arquivo copiado: ${path.basename(dest)}`);
+      } else {
+        throw new Error(`Erro: Diretório de templates não encontrado em ${source}`);
+      }
+    }
+  }
 }
