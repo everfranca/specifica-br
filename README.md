@@ -23,12 +23,6 @@ Para instalar o Specifica-BR como uma ferramenta CLI global:
 npm install -g specifica-br
 ```
 
-Para usar como uma ferramenta local no projeto:
-
-```bash
-npm install --save-dev specifica-br
-```
-
 ## Comandos Básicos
 
 ### `specifica-br init`

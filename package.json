@@ -1,7 +1,15 @@
 {
   "name": "specifica-br",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Ferramenta de automação para desenvolvimento guiado por especificações (Spec Driven Development - SDD) com IA. Otimizado para o ecossistema brasileiro.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/everfranca/specifica-br.git"
+  },
+  "homepage": "https://github.com/everfranca/specifica-br#readme",
+  "bugs": {
+    "url": "https://github.com/everfranca/specifica-br/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
