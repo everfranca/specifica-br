@@ -18,10 +18,10 @@
   Se existir conteúdo aqui, trate como prioridade máxima.
  
   3. PRD (Regras de Negócio):
-  {{content_of_prd_md}}
+  {{[Link PRD]}} - VOCÊ DEVE OBRIGATORIAMENTE IMPORTAR TODO O CONTEUDO DO ARQUIVO PRD DA FEATURE E ADICIONAR EM SEU CONTEXTO.
  
   4. TECH_SPEC (Especificação Técnica e Arquitetura):
-  {{content_of_techspec_md}}
+  {{[Link TECHSPEC]}} - VOCÊ DEVE OBRIGATORIAMENTE IMPORTAR TODO O CONTEUDO DO ARQUIVO TECHSPEC DA FEATURE E ADICIONAR EM SEU CONTEXTO.
  
   5. PROJECT_RULES (Padrões do Projeto - AGENTS.md):
   {{content_of_agents_md}}
@@ -68,12 +68,6 @@
  	- Todos os arquivos que deveriam ser implementados existirem
  	- Não houver código incompleto, TODOs ou placeholders
  
-  # PASSO 5: ATUALIZAÇÃO DA TASK
-  - Gere o conteúdo COMPLETO do arquivo da task.
-  - Marque com [x] apenas os critérios comprovadamente atendidos.
-  - Marque com [x] a task recém completada em {{tasks_file.md}}
-  - Critérios sem evidência devem permanecer [ ].
- 
   </execution_protocol>
  	
   <constraints>
@@ -117,10 +111,17 @@
   # INICIE A EXECUÇÃO SOMENTE APÓS: 
    - Definir o contrato de execução
    - Confirmar que todos os critérios podem ser atendidos
+  
+  # ATUALIZAÇÃO DA TASK
+  - Gere o conteúdo COMPLETO do arquivo da task.
+  - Marque com [x] apenas os critérios comprovadamente atendidos.
+  - Marque com [x] a task recém completada em {{tasks_file.md}}
+  - Critérios sem evidência devem permanecer [ ].
+
    - **Para recorrer a documentações de linguagens, frameworks e bibliotecas, utilize o Context7**.
  
  </critical>
  	
- Command Version: 0.0.3
+ Command Version: 0.0.4
  
 </system_instructions>

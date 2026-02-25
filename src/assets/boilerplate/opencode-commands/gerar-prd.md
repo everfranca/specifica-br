@@ -88,10 +88,11 @@
       - Não assumir nada que não esteja explicitamente declarado
       - Planejar antes de perguntar
       - Perguntar antes de decidir
-	  - PERGUNTAS DE CLARIFICAÇÃO DEVEM SER REALIZADAS
+	   - PERGUNTAS DE CLARIFICAÇÃO DEVEM SER REALIZADAS
+      - ANTES DE ALTERAR O STATUS PARA `APPROVED`, SOLICITE AO USUÁRIO A APROVAÇÃO.
    </critical>
    
    ---
 
-   **Command Version:** 0.0.3
+   **Command Version:** 0.0.4
 </system_instructions>

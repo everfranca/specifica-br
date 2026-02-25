@@ -75,9 +75,9 @@
  8. [ ] **Tech Spec:** Arquivo da Tech Spec foi criado corretamente no diretório de destino `./specs/features/[nome-da-funcionalidade]/`
 
  ## 5. REGRAS PARA ATUALIZAÇÃO DE STATUS
- 1. Ao iniciar a análise do PRD o status DEVE ser DRAFT (Rascunho).
+ 1. Ao iniciar a análise do PRD o status DEVE ser APPROVED (APROVADO).
  2. Após todas as entrevistas com o Usuário o status DEVE ser IN PROGRESS.
  3. Após todas as perguntas de clarificação o status DEVE ser APPROVED.
 
-**Command Version:** 0.0.3 
+**Command Version:** 0.0.4
 </system_instructions>
