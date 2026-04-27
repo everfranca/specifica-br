@@ -1,32 +1,49 @@
 import chalk from 'chalk';
+import path from 'path';
+import type { CopyResult } from '../types/init.js';
 
-export function showSuccessMessage(directoryConvention: 'opencode' | 'specifica-br'): void {
-  const commandDir = directoryConvention === 'opencode' 
-    ? '.opencode/commands/' 
-    : 'specifica-br/commands/';
-
+export function showSuccessMessage(copyResult: CopyResult): void {
   console.log('');
   console.log(chalk.green.bold('✓ Estrutura SDD criada com sucesso!'));
   console.log('');
   console.log(chalk.gray('Diretórios criados:'));
-  console.log(chalk.gray(`  • ${commandDir}`));
-  console.log(chalk.gray('  • specs/templates/'));
+  if (copyResult.commandsDir) {
+    console.log(chalk.gray(`  • ${copyResult.commandsDir}`));
+  }
+  if (copyResult.skillsDir) {
+    console.log(chalk.gray(`  • ${copyResult.skillsDir}`));
+  }
+  if (copyResult.templatesDir) {
+    console.log(chalk.gray(`  • ${copyResult.templatesDir}`));
+  }
   console.log('');
-  console.log(chalk.gray('Arquivos de comandos copiados:'));
-  console.log(chalk.gray('  • gerar-prd.md'));
-  console.log(chalk.gray('  • gerar-techspec.md'));
-  console.log(chalk.gray('  • gerar-tasks.md'));
-  console.log(chalk.gray('  • executar-task.md'));
-  console.log('');
-  console.log(chalk.gray('Arquivos de templates copiados:'));
-  console.log(chalk.gray('  • prd-template.md'));
-  console.log(chalk.gray('  • techspec-template.md'));
-  console.log(chalk.gray('  • task-template.md'));
-  console.log(chalk.gray('  • tasks-template.md'));
-  console.log('');
-  console.log(chalk.gray('Para começar, navegue até o diretório de comandos e execute:'));
-  console.log(chalk.gray(`  cd ${commandDir.split('/')[0]}`));
-  console.log('');
+  if (copyResult.commandsCopied.length > 0) {
+    console.log(chalk.gray('Arquivos de comandos copiados:'));
+    copyResult.commandsCopied.forEach(file => {
+      console.log(chalk.gray(`  • ${file}`));
+    });
+    console.log('');
+  }
+  if (copyResult.skillsCopied.length > 0) {
+    console.log(chalk.gray('Arquivos de skills copiados:'));
+    copyResult.skillsCopied.forEach(file => {
+      console.log(chalk.gray(`  • ${file}`));
+    });
+    console.log('');
+  }
+  if (copyResult.templatesCopied.length > 0) {
+    console.log(chalk.gray('Arquivos de templates copiados:'));
+    copyResult.templatesCopied.forEach(file => {
+      console.log(chalk.gray(`  • ${file}`));
+    });
+    console.log('');
+  }
+  if (copyResult.commandsDir) {
+    const rootDir = copyResult.commandsDir.split(path.sep)[0];
+    console.log(chalk.gray('Para começar, navegue até o diretório de comandos:'));
+    console.log(chalk.gray(`  cd ${rootDir}`));
+    console.log('');
+  }
 }
 
 export function showMissionMessage(): void {

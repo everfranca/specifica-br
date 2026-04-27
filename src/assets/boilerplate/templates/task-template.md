@@ -6,7 +6,7 @@
 | **Data** | {{DATA_ATUAL}} |
 | **Task** | {{TASK_TITLE}} |
 | **Feature** | [nome-da-funcionalidade] |
-| **Referência PRD** | [Link PRD](@specs/features/[nome-da-funcionalidade]/prd.md) |]
+ | **Referência PRD** | [Link PRD](./specs/features/[nome-da-funcionalidade]/prd.md) |
 | **Referência Tech Spec** | [Link PRD](@specs/features/[nome-da-funcionalidade]/techspec.md) |
 <!-- Status: TODO → IN_PROGRESS → DONE -->
 
@@ -34,6 +34,34 @@ Regras:
 {{LIBS_LIST}}
 <!-- Proibido adicionar novas dependências -->
 - [ ] Tratamento de erros conforme padrão do projeto.
+
+### 2.3 Contratos (Boundaries)
+<!--
+Os contratos abaixo sao referencias EXPLICITAS a secao 4 do techspec.md.
+Cada contrato que esta task toca DEVE estar listado.
+O executor DEVE implementar o contrato EXATAMENTE como definido na techspec.
+
+ORIGEM DO CONTRATO:
+- DESCOBERTO: contrato ja existia no codigo (task = adaptar/integrar)
+- SOLICITADO: contrato foi definido pelo usuario (task = implementar do zero)
+- PROPOSTO: contrato foi proposto pela LLM (task = implementar + validar)
+-->
+
+#### Contratos de Entrada (O que esta task recebe)
+- [ ] ({{CONTRACT_ID}}) {{CONTRACT_NAME}} - Secao {{TECHSPEC_SECTION}} do techspec.md
+  - Schema de entrada: {{INPUT_SCHEMA_REF}}
+  - Validacoes obrigatorias: {{VALIDATIONS_REF}}
+<!-- ADICIONAR CONTRATOS DE ENTRADA CONFORME NECESSARIO -->
+
+#### Contratos de Saida (O que esta task produz)
+- [ ] ({{CONTRACT_ID}}) {{CONTRACT_NAME}} - Secao {{TECHSPEC_SECTION}} do techspec.md
+  - Schema de saida: {{OUTPUT_SCHEMA_REF}}
+  - Status codes / codigos de erro: {{ERROR_CODES_REF}}
+<!-- ADICIONAR CONTRATOS DE SAIDA CONFORME NECESSARIO -->
+
+#### Contratos de Configuracao (Variaveis de ambiente)
+- [ ] ({{ENV_ID}}) {{ENV_VAR_NAME}} - obrigatoria: {{REQUIRED}}, default: {{DEFAULT_VALUE}}
+<!-- ADICIONAR VARIÁVEIS DE AMBIENTE CONFORME NECESSARIO -->
 
 ---
 
@@ -66,24 +94,38 @@ Regras:
 
 ---
 
-## 4. Detalhes de Implementação & Snippets
+## 4. Detalhes de Implementacao & Contratos
 <!-- 
-Os exemplos abaixo são CONTRATOS.
-A implementação final DEVE respeitar forma e assinatura. 
+Os exemplos abaixo sao CONTRATOS extraidos da techspec.md secao 4.
+A implementacao final DEVE respeitar EXATAMENTE o schema definido.
+Qualquer desvio DEVE ser justificado em "Notas de Execucao" (secao 8).
 -->
 
+* **Contrato(s) Implementado(s):** {{CONTRACT_IDS}} (ref: techspec.md secao {{TECHSPEC_SECTIONS}})
 * **Nomenclatura Esperada:** `{{NAMING_CONVENTION}}`
-* **Estrutura de Input (Exemplo):**
+* **Schema de Entrada (obrigatorio):**
     ```json
     {{INPUT_EXAMPLE}}
     ```
-* **Assinaturas/Interfaces Chave:**
-    ```csharp
-    {{CODE_SIGNATURE_EXAMPLE}}
+* **Schema de Saida (obrigatorio):**
+    ```json
+    {{OUTPUT_EXAMPLE}}
     ```
-* **Restrições:**
-- Não alterar assinaturas públicas
-- Não introduzir parâmetros opcionais não documentados
+* **Schema de Erro (obrigatorio):**
+    ```json
+    {{ERROR_EXAMPLE}}
+    ```
+* **Headers/Metadata:**
+    ```json
+    {{HEADERS_EXAMPLE}}
+    ```
+* **Variaveis de Ambiente Necessarias:**
+    - `{{ENV_VAR_A}}` - {{descricao}}
+    - `{{ENV_VAR_B}}` - {{descricao}}
+* **Restricoes:**
+- Nao alterar assinaturas publicas
+- Nao introduzir parametros opcionais nao documentados
+- Schemas DEVEM conferir com o definido na techspec.md secao 4
 
 ---
 
@@ -101,13 +143,17 @@ A implementação final DEVE respeitar forma e assinatura.
 
 ---
 
-## 6. Critérios de Aceite (Definition of Done)
-- [ ] O código compila/executa sem erros de sintaxe.
-- [ ] Todos os requisitos funcionais da seção 2.1 foram atendidos.
-- [ ] Os testes (Passo 4) foram criados e estão passando.
-- [ ] Não há trechos de código comentados ou "TODOs" residuais.
-- [ ] A implementação respeita a arquitetura descrita no `@spec/features/[nome-da-funcionalidade]/techspec.md`.
-- [ ] Todos os passos da seção 3 estão marcados como concluídos
+## 6. Criterios de Aceite (Definition of Done)
+- [ ] O codigo compila/executa sem erros de sintaxe.
+- [ ] Todos os requisitos funcionais da secao 2.1 foram atendidos.
+- [ ] Todos os contratos listados na secao 2.3 foram implementados conforme techspec.md secao 4.
+- [ ] Schemas de entrada/saida conferem exatamente com o definido na techspec.
+- [ ] Codigos de erro e responses documentados foram implementados.
+- [ ] Variaveis de ambiente obrigatorias estao documentadas e validadas no startup.
+- [ ] Os testes (Passo 4) foram criados e estao passando.
+- [ ] Nao ha trechos de codigo comentados ou "TODOs" residuais.
+- [ ] A implementacao respeita a arquitetura descrita no `@spec/features/[nome-da-funcionalidade]/techspec.md`.
+- [ ] Todos os passos da secao 3 estao marcados como concluidos
 - [ ] Esta task foi marcada como DONE no arquivo `./spec/features/[nome-da-funcionalidade]/tasks.md` <!-- O modelo DEVE atualizar este arquivo -->
 
 ### 6.1 Efeitos Colaterais Obrigatórios

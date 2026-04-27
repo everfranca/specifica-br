@@ -1,80 +1,219 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { ToolMapping, CopyResult } from '../types/init.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class FileService {
-  async createStructure(directoryConvention: 'opencode' | 'specifica-br'): Promise<void> {
-    const commandsDestDir = directoryConvention === 'opencode'
-      ? path.join(process.cwd(), '.opencode', 'commands')
-      : path.join(process.cwd(), 'specifica-br', 'commands');
+  async loadToolsMapping(): Promise<ToolMapping[]> {
+    const mappingPath = path.join(__dirname, '..', 'tools-mapping.json');
 
-    console.log(`• Criando diretórios com convenção: ${directoryConvention}`);
-    await this.createDirectories(commandsDestDir, path.join(process.cwd(), 'specs', 'templates'));
-    await this.copyTemplates(commandsDestDir);
+    try {
+      await fs.access(mappingPath);
+    } catch (error) {
+      throw new Error('Erro: Arquivo de mapeamento de ferramentas (tools-mapping.json) não encontrado ou inválido.');
+    }
+
+    let mappingContent: string;
+    try {
+      mappingContent = await fs.readFile(mappingPath, 'utf-8');
+    } catch (error) {
+      throw new Error('Erro: Arquivo de mapeamento de ferramentas (tools-mapping.json) não encontrado ou inválido.');
+    }
+
+    let mappings: unknown;
+    try {
+      mappings = JSON.parse(mappingContent);
+    } catch (error) {
+      throw new Error('Erro: Arquivo tools-mapping.json contém JSON inválido.');
+    }
+
+    if (!Array.isArray(mappings)) {
+      throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+    }
+
+    if (mappings.length !== 5) {
+      throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+    }
+
+    for (const mapping of mappings) {
+      if (typeof mapping !== 'object' || mapping === null) {
+        throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+      }
+
+      const toolMapping = mapping as Record<string, unknown>;
+
+      if (!toolMapping.name || typeof toolMapping.name !== 'string' || toolMapping.name.trim().length === 0) {
+        throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+      }
+
+      if (toolMapping.commands !== undefined && (typeof toolMapping.commands !== 'string' || toolMapping.commands.trim().length === 0)) {
+        throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+      }
+
+      if (toolMapping.skills !== undefined && (typeof toolMapping.skills !== 'string' || toolMapping.skills.trim().length === 0)) {
+        throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+      }
+
+      if (toolMapping.templates !== undefined && (typeof toolMapping.templates !== 'string' || toolMapping.templates.trim().length === 0)) {
+        throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
+      }
+    }
+
+    return mappings as ToolMapping[];
   }
 
-  private async createDirectories(commandsDestDir: string, templatesDestDir: string): Promise<void> {
-    try {
-      await fs.ensureDir(commandsDestDir);
-      console.log(`✓ Diretório criado: ${commandsDestDir}`);
+  async createStructure(toolMapping: ToolMapping): Promise<CopyResult> {
+    const boilerplateRoot = path.join(__dirname, '..', 'boilerplate');
+    const commandsCopied: string[] = [];
+    const skillsCopied: string[] = [];
+    const templatesCopied: string[] = [];
 
-      await fs.ensureDir(templatesDestDir);
-      console.log(`✓ Diretório criado: ${templatesDestDir}`);
+    if (toolMapping.commands) {
+      const sourceDir = path.join(boilerplateRoot, 'commands');
+      const destDir = path.join(process.cwd(), toolMapping.commands);
+
+      const exists = await fs.pathExists(sourceDir);
+      if (!exists) {
+        throw new Error('Erro: Diretorio de commands não encontrado no boilerplate.');
+      }
+
+      try {
+        await fs.ensureDir(destDir);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+          throw new Error('Erro: Sem permissão para criar diretorios.');
+        }
+        throw error;
+      }
+
+      const files = await this.copyDirectoryContents(sourceDir, destDir);
+      commandsCopied.push(...files);
+    }
+
+    if (toolMapping.skills) {
+      const sourceDir = path.join(boilerplateRoot, 'skills');
+      const destDir = path.join(process.cwd(), toolMapping.skills);
+
+      const exists = await fs.pathExists(sourceDir);
+      if (!exists) {
+        throw new Error('Erro: Diretorio de skills não encontrado no boilerplate.');
+      }
+
+      try {
+        await fs.ensureDir(destDir);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+          throw new Error('Erro: Sem permissão para criar diretorios.');
+        }
+        throw error;
+      }
+
+      const files = await this.copySkillsRecursively(sourceDir, destDir);
+      skillsCopied.push(...files);
+    }
+
+    if (toolMapping.templates) {
+      const sourceDir = path.join(boilerplateRoot, 'templates');
+      const destDir = path.join(process.cwd(), toolMapping.templates);
+
+      const exists = await fs.pathExists(sourceDir);
+      if (!exists) {
+        throw new Error('Erro: Diretorio de templates não encontrado no boilerplate.');
+      }
+
+      try {
+        await fs.ensureDir(destDir);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+          throw new Error('Erro: Sem permissão para criar diretorios.');
+        }
+        throw error;
+      }
+
+      const files = await this.copyDirectoryContents(sourceDir, destDir);
+      templatesCopied.push(...files);
+    }
+
+    const result: CopyResult = {
+      commandsDir: toolMapping.commands ? path.join(process.cwd(), toolMapping.commands) : '',
+      commandsCopied,
+      skillsDir: toolMapping.skills ? path.join(process.cwd(), toolMapping.skills) : undefined,
+      skillsCopied,
+      templatesDir: toolMapping.templates ? path.join(process.cwd(), toolMapping.templates) : '',
+      templatesCopied
+    };
+
+    return result;
+  }
+
+  async copyDirectoryContents(sourceDir: string, destDir: string): Promise<string[]> {
+    const copiedFiles: string[] = [];
+
+    try {
+      const files = await fs.readdir(sourceDir);
+
+      for (const file of files) {
+        const sourcePath = path.join(sourceDir, file);
+        const destPath = path.join(destDir, file);
+
+        const stat = await fs.stat(sourcePath);
+
+        if (stat.isFile()) {
+          try {
+            await fs.copy(sourcePath, destPath, { overwrite: true });
+            copiedFiles.push(file);
+            console.log(`✓ Arquivo copiado: ${file}`);
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+              throw new Error('Erro: Sem permissão para copiar arquivos.');
+            }
+            throw error;
+          }
+        }
+      }
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
-        throw new Error('Erro: Sem permissão para criar diretórios.');
+        throw new Error('Erro: Sem permissão para copiar arquivos.');
       }
       throw error;
     }
+
+    return copiedFiles;
   }
 
-  private async copyTemplates(commandsDestDir: string): Promise<void> {
-    const distRoot = path.resolve(__dirname, '..', 'boilerplate');
+  async copySkillsRecursively(sourceDir: string, destDir: string): Promise<string[]> {
+    const copiedFiles: string[] = [];
 
-    const templateFiles = [
-      {
-        source: path.join(distRoot, 'opencode-commands', 'gerar-prd.md'),
-        dest: path.join(commandsDestDir, 'gerar-prd.md')
-      },
-      {
-        source: path.join(distRoot, 'opencode-commands', 'gerar-techspec.md'),
-        dest: path.join(commandsDestDir, 'gerar-techspec.md')
-      },
-      {
-        source: path.join(distRoot, 'opencode-commands', 'gerar-tasks.md'),
-        dest: path.join(commandsDestDir, 'gerar-tasks.md')
-      },
-      {
-        source: path.join(distRoot, 'opencode-commands', 'executar-task.md'),
-        dest: path.join(commandsDestDir, 'executar-task.md')
-      },
-      {
-        source: path.join(distRoot, 'specs-templates', 'prd-template.md'),
-        dest: path.join(process.cwd(), 'specs', 'templates', 'prd-template.md')
-      },
-      {
-        source: path.join(distRoot, 'specs-templates', 'techspec-template.md'),
-        dest: path.join(process.cwd(), 'specs', 'templates', 'techspec-template.md')
-      },
-      {
-        source: path.join(distRoot, 'specs-templates', 'task-template.md'),
-        dest: path.join(process.cwd(), 'specs', 'templates', 'task-template.md')
-      },
-      {
-        source: path.join(distRoot, 'specs-templates', 'tasks-template.md'),
-        dest: path.join(process.cwd(), 'specs', 'templates', 'tasks-template.md')
-      }
-    ];
+    try {
+      await fs.copy(sourceDir, destDir, { overwrite: true });
 
-    for (const { source, dest } of templateFiles) {
-      if (await fs.pathExists(source)) {
-        await fs.copy(source, dest, { overwrite: true });
-        console.log(`✓ Arquivo copiado: ${path.basename(dest)}`);
-      } else {
-        throw new Error(`Erro: Diretório de templates não encontrado em ${source}`);
+      const collectFiles = async (dir: string, baseDir: string): Promise<void> => {
+        const items = await fs.readdir(dir);
+
+        for (const item of items) {
+          const itemPath = path.join(dir, item);
+          const stat = await fs.stat(itemPath);
+          const relativePath = path.relative(baseDir, itemPath);
+
+          if (stat.isFile()) {
+            copiedFiles.push(relativePath);
+            console.log(`✓ Arquivo copiado: ${relativePath}`);
+          } else if (stat.isDirectory()) {
+            await collectFiles(itemPath, baseDir);
+          }
+        }
+      };
+
+      await collectFiles(destDir, destDir);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+        throw new Error('Erro: Sem permissão para copiar arquivos.');
       }
+      throw error;
     }
+
+    return copiedFiles;
   }
 }

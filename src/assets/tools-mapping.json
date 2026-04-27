@@ -1,0 +1,32 @@
+[
+  {
+    "name": "ClaudeCode",
+    "commands": ".claude/commands/",
+    "skills": ".claude/skills/",
+    "templates": "specs/templates/"
+  },
+  {
+    "name": "Cursor",
+    "commands": ".cursor/commands/",
+    "skills": ".cursor/skills/",
+    "templates": "specs/templates/"
+  },
+  {
+    "name": "Gemini CLI",
+    "commands": ".gemini/commands/",
+    "skills": ".agents/skills/",
+    "templates": "specs/templates/"
+  },
+  {
+    "name": "Kiro",
+    "commands": ".kiro/commands/",
+    "skills": ".kiro/skills/",
+    "templates": "specs/templates/"
+  },
+  {
+    "name": "OpenCode",
+    "commands": ".opencode/commands/",
+    "skills": ".agents/skills/",
+    "templates": "specs/templates/"
+  }
+]

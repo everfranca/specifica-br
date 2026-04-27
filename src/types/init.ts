@@ -1,21 +1,19 @@
-/**
- * Interface para as respostas do comando init.
- * Representa as escolhas do usuário durante o fluxo interativo.
- */
-export interface InitAnswers {
-  directoryConvention: 'opencode' | 'specifica-br';
-  tool?: string;
-  model?: string;
+export interface ToolMapping {
+  name: string;
+  commands?: string;
+  skills?: string;
+  templates?: string;
 }
 
-/**
- * Interface para configuração de templates.
- * Mapeia ferramentas e modelos para os paths de arquivos de comando.
- */
-export interface TemplateConfig {
-  [key: string]: {
-    tool: string;
-    model: string;
-    opencodeCommands: string[];
-  };
+export interface InitAnswers {
+  toolName: string;
+}
+
+export interface CopyResult {
+  commandsDir: string;
+  commandsCopied: string[];
+  skillsDir?: string;
+  skillsCopied: string[];
+  templatesDir: string;
+  templatesCopied: string[];
 }
