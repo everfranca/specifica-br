@@ -27,36 +27,62 @@ npm install -g specifica-br
 
 ### `specifica-br init`
 
-Inicializa a estrutura SDD no projeto atual.
+Instala os comandos e skills SDD no **diretório global** da ferramenta de IA e cria os templates no projeto atual.
 
 ```bash
-specifica-br init
+specifica-br init            # instalação global (padrão)
+specifica-br init --local    # instala tudo dentro do projeto atual
 ```
 
 **O que faz:**
-- Permite selecionar a convenção de diretórios (OpenCode ou Specifica-BR)
-- Cria os diretórios de comandos e templates baseados na seleção
-- Se OpenCode for selecionado, guia na escolha da ferramenta e modelo de IA
-- Copia os arquivos de templates necessários
+- Permite selecionar **uma ou mais** ferramentas de IA (OpenCode, ClaudeCode, Cursor, Gemini CLI, Kiro)
+- Instala os 7 comandos e as 2 skills no diretório global de cada ferramenta — basta rodar uma vez por máquina, e eles ficam disponíveis em todos os projetos
+- Cria os 7 templates em `specs/templates/` **no projeto**, por serem artefatos versionáveis do SDD
+- Detecta instalações antigas dentro do projeto (`.claude/commands/`, `.opencode/command/`, `.agents/skills/`, etc.) e oferece removê-las, evitando comandos duplicados
 - Exibe informações sobre o workflow SDD
+
+**Opções:**
+
+| Opção | Descrição |
+|:---|:---|
+| `--local` | Instala comandos e skills dentro do projeto atual, em vez do diretório global. Reproduz o comportamento das versões anteriores. |
 
 **Exemplo de uso:**
 ```bash
 $ specifica-br init
 Inicializando estrutura Spec Driven Development...
 
-Selecione a convenção de diretórios para comandos:
-❯ Recomendado (OpenCode)
-  Agnóstico (Specifica-BR)
+Selecione as ferramentas de IA (espaço para marcar, enter para confirmar):
+◉   ClaudeCode
+◯   Cursor
+◯   Gemini CLI
+◯   Kiro
+◯   OpenCode
 
-Selecione a ferramenta de IA:
-❯ OpenCode
+ℹ Instalação global — os seguintes diretórios serão criados:
 
-Selecione o modelo de IA:
-❯ GLM 4.7
+  Comandos:
+    • ~/.claude/commands/ (ClaudeCode)
+  Skills:
+    • ~/.claude/skills/ (ClaudeCode)
+  Templates:
+    • specs/templates (ClaudeCode)
+
+  Os templates continuam no projeto, em specs/templates/.
+
+[?] Deseja continuar? Yes
+
+ℹ Instalação antiga do specifica-br encontrada neste projeto:
+
+  .claude/commands (7 item(ns))
+
+[?] Remover a instalação antiga do projeto? Yes
 
 ✓ Estrutura SDD criada com sucesso!
 ```
+
+> Ao marcar Gemini CLI e OpenCode juntos, as skills são gravadas uma única vez: as duas
+> ferramentas compartilham `~/.agents/skills/`.
 
 ### `specifica-br help`
 
@@ -80,17 +106,29 @@ specifica-br help --completo
 ```
 
 **O que faz:**
-- Mostra o fluxo completo de SDD em 5 passos
+- Mostra o fluxo completo de SDD em 7 passos
 - Explica cada etapa do workflow
+- Lista as ferramentas de IA suportadas
 - Lista os benefícios do SDD
 
 **Workflow SDD:**
 
 1. **Inicialização:** Cria estrutura de diretórios e templates
-2. **Geração de PRD:** Define requisitos funcionais e regras de negócio
-3. **Geração de Tech Spec:** Define arquitetura técnica e plano de implementação
-4. **Geração de Tarefas:** Decompõe o plano técnico em tarefas executáveis
-5. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação
+2. **Definição do Contexto:** Escolha baseada no tipo de projeto
+   - **Projeto Novo (Green Field):** Use `/gerar-visao` - Define Fundação (Contexto + Stack) - Role: Product Manager + Tech Lead - Foco: Visão macro
+   - **Projeto em Desenvolvimento (Brown Field):** Use `/gerar-contexto` - Analisa código e INFERE (Contexto + Stack) - Role: Engenheiro Senior + Arquiteto - Foco: Análise automática
+3. **Geração de PRD:** Define requisitos funcionais e regras de negócio
+4. **Geração de Tech Spec:** Define arquitetura técnica e plano de implementação
+5. **Geração de Tarefas:** Decompõe o plano técnico em tarefas executáveis
+6. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação
+7. **Code Review:** Realiza code review do código implementado
+
+**Ferramentas de IA suportadas:**
+- OpenCode
+- ClaudeCode
+- Cursor
+- Gemini CLI
+- Kiro
 
 ### `specifica-br upgrade`
 
@@ -315,7 +353,7 @@ Este sistema funciona nativamente em todos os sistemas operacionais:
 
 ## Workflow SDD Completo
 
-O workflow completo de Spec Driven Development é composto por 5 etapas:
+O workflow completo de Spec Driven Development é composto por 7 etapas:
 
 ### 1. Inicialização
 
@@ -323,9 +361,35 @@ O workflow completo de Spec Driven Development é composto por 5 etapas:
 specifica-br init
 ```
 
-Cria a estrutura de diretórios e templates no projeto.
+Instala os comandos e skills no diretório global da ferramenta de IA (uma vez por máquina)
+e cria os templates em `specs/templates/` no projeto. Use `--local` para instalar tudo
+dentro do projeto atual.
 
-### 2. Geração de PRD
+### 2. Definição do Contexto
+
+Escolha o comando baseado no tipo do seu projeto:
+
+**Projeto Novo (Green Field):**
+```bash
+/gerar-visao [sua ideia]
+```
+
+Define a Fundação do projeto (Contexto + Stack Tecnológica).
+- **Role:** Product Manager + Tech Lead
+- **Foco:** Visão macro e estratégica
+- **Resultado:** `specs/core/product_vision.md` (visão de negócio) e `specs/core/architecture.md` (arquitetura técnica)
+
+**Projeto em Desenvolvimento (Brown Field):**
+```bash
+/gerar-contexto
+```
+
+Analisa o código existente e INFERE o contexto.
+- **Role:** Engenheiro Senior + Arquiteto
+- **Foco:** Análise automática do código base
+- **Resultado:** `specs/core/product_vision.md` (inferida do código) e `specs/core/architecture.md` (com níveis de confiança)
+
+### 3. Geração de PRD
 
 ```bash
 /gerar-prd [sua ideia]
@@ -333,7 +397,7 @@ Cria a estrutura de diretórios e templates no projeto.
 
 Define requisitos funcionais e regras de negócio da feature.
 
-### 3. Geração de Tech Spec
+### 4. Geração de Tech Spec
 
 ```bash
 /gerar-techspec [caminho do prd]
@@ -341,7 +405,9 @@ Define requisitos funcionais e regras de negócio da feature.
 
 Define arquitetura técnica, componentes e plano de implementação.
 
-### 4. Geração de Tarefas
+Antes da entrevista técnica, o comando levanta o inventário de skills e MCPs disponíveis nos escopos de projeto e global, carrega os itens pertinentes e os utiliza na elaboração do documento. A Tech Spec gerada contém a seção `9. Skills e MCPs Utilizados`, que registra nome, tipo (SKILL ou MCP), origem (PROJETO ou GLOBAL), situação e quais seções ou decisões cada item embasou. Quando nenhum item é aplicável, a seção registra a ausência com justificativa.
+
+### 5. Geração de Tarefas
 
 ```bash
 /gerar-tasks [caminho do prd] [caminho do tech spec]
@@ -349,58 +415,112 @@ Define arquitetura técnica, componentes e plano de implementação.
 
 Decompõe o plano técnico em tarefas executáveis.
 
-### 5. Execução de Tarefas
+O comando executa sua própria varredura de skills e MCPs, independente da Tech Spec, e seleciona por relevância os itens pertinentes a cada task. Cada arquivo de task gerado contém a seção `9. Skills e MCPs`, com os itens rastreáveis por checkbox e cinco campos obrigatórios por item: nome, tipo (SKILL ou MCP), origem (PROJETO ou GLOBAL), motivo da seleção e passos do plano de execução em que o item deve ser aplicado. Quando nenhum item é aplicável à task, a seção registra a ausência com justificativa.
+
+### 6. Execução de Tarefas
 
 ```bash
-/executar-task [caminho da task] [prd] [tech spec]
+/executar-task [caminho da task]
 ```
 
 Implementa cada tarefa individualmente seguindo a especificação.
 
+Antes de qualquer implementação, o comando carrega as skills e verifica os MCPs declarados na seção 9 da task. Um item indisponível não interrompe a execução: o comando informa a indisponibilidade, registra o fato e prossegue. Ao final, as Notas de Execução da task recebem a evidência de uso, com cada item declarado classificado em uma de três situações: CARREGADO E UTILIZADO, CARREGADO E NAO UTILIZADO (com justificativa) ou INDISPONIVEL. O registro completo é condição para marcar a task como concluída.
+
+### 7. Code Review
+
+```bash
+/realizar-codereview
+```
+
+Realiza code review do código implementado.
+
 ## Estrutura do Projeto
 
-Após executar `specifica-br init`, a estrutura do projeto depende da convenção selecionada:
+A partir da versão 1.6, comandos e skills ficam no **diretório global do usuário** — instalados uma única vez por máquina — e apenas os templates ficam no projeto.
 
-**Se opção 1 (OpenCode) for selecionada:**
+**Estrutura do projeto após `specifica-br init`:**
+
+```
+seu-projeto/
+└── specs/
+    └── templates/
+        ├── prd-template.md
+        ├── techspec-template.md
+        ├── task-template.md
+        ├── tasks-template.md
+        ├── architecture-template.md
+        ├── product_vision-template.md
+        └── codereview-template.md
+```
+
+**Diretórios globais por ferramenta e sistema operacional:**
+
+| Ferramenta | Comandos (Linux/macOS) | Comandos (Windows) | Skills (Linux/macOS) | Skills (Windows) |
+|:---|:---|:---|:---|:---|
+| ClaudeCode | `~/.claude/commands/` | `%USERPROFILE%\.claude\commands\` | `~/.claude/skills/` | `%USERPROFILE%\.claude\skills\` |
+| Cursor | `~/.cursor/commands/` | `%USERPROFILE%\.cursor\commands\` | `~/.cursor/skills/` | `%USERPROFILE%\.cursor\skills\` |
+| Gemini CLI | `~/.gemini/commands/` | `%USERPROFILE%\.gemini\commands\` | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
+| Kiro | `~/.kiro/commands/` | `%USERPROFILE%\.kiro\commands\` | `~/.kiro/skills/` | `%USERPROFILE%\.kiro\skills\` |
+| OpenCode | `$XDG_CONFIG_HOME/opencode/command/` (padrão `~/.config/opencode/command/`) | `%APPDATA%\opencode\command\` | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
+
+`~` e `%USERPROFILE%` correspondem a `/home/usuario` (Linux), `/Users/usuario` (macOS) e `C:\Users\usuario` (Windows 10/11).
+
+**Estrutura no projeto com `--local`:**
+
+Com `specifica-br init --local`, comandos e skills voltam para dentro do projeto, nos diretórios relativos equivalentes:
 
 ```
 seu-projeto/
 ├── .opencode/
-│   └── commands/
+│   └── command/
 │       ├── gerar-prd.md
 │       ├── gerar-techspec.md
 │       ├── gerar-tasks.md
-│       └── executar-task.md
+│       ├── executar-task.md
+│       ├── gerar-contexto.md
+│       ├── gerar-visao.md
+│       └── realizar-codereview.md
+├── .agents/
+│   └── skills/
+│       ├── product-manager/
+│       │   └── SKILL.md
+│       └── techspec-generator/
+│           └── SKILL.md
 └── specs/
     └── templates/
-        ├── prd-template.md
-        ├── techspec-template.md
-        ├── task-template.md
-        └── tasks-template.md
 ```
 
-**Se opção 2 (Specifica-BR) for selecionada:**
+**Comandos disponíveis (7):**
+1. `/gerar-prd` - Gera Product Requirements Document
+2. `/gerar-techspec` - Gera Especificação Técnica
+3. `/gerar-tasks` - Gera lista de tarefas
+4. `/executar-task` - Executa uma tarefa específica
+5. `/gerar-contexto` - Gera contexto do projeto
+6. `/gerar-visao` - Gera visão estratégica
+7. `/realizar-codereview` - Realiza code review
 
-```
-seu-projeto/
-├── specifica-br/
-│   └── commands/
-│       ├── gerar-prd.md
-│       ├── gerar-techspec.md
-│       ├── gerar-tasks.md
-│       └── executar-task.md
-└── specs/
-    └── templates/
-        ├── prd-template.md
-        ├── techspec-template.md
-        ├── task-template.md
-        └── tasks-template.md
-```
+**Skills disponíveis (2):**
+1. `product-manager` - Skill especializada para criar PRDs, definindo requisitos funcionais, regras de negócio e critérios de aceitação
+2. `techspec-generator` - Skill especializada para criar Tech Specs, definindo arquitetura técnica, componentes e plano de implementação
+
+**Templates disponíveis (7):**
+1. `prd-template.md` - Template de PRD
+2. `techspec-template.md` - Template de Tech Spec
+3. `task-template.md` - Template de Task
+4. `tasks-template.md` - Template de Tasks
+5. `architecture-template.md` - Template de Arquitetura/Contexto
+6. `product_vision-template.md` - Template de Visão de Produto
+7. `codereview-template.md` - Template de Code Review
 
 ## Opções Globais
 
 - `-V, --version`: Exibe o número da versão
 - `-h, --help`: Exibe ajuda para o comando
+
+## Opções por Comando
+
+- `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
 
 ## Desenvolvimento
 

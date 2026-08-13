@@ -1,3 +1,8 @@
+---
+description: Gera o PRD de uma funcionalidade a partir da descrição do usuário.
+argument-hint: "[descrição da funcionalidade]"
+---
+
 <system_instructions>
     
    # SYSTEM COMMAND: PRD GENERATOR (Foco na funcionalidade)

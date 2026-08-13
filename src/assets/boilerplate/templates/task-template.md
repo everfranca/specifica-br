@@ -130,7 +130,10 @@ Qualquer desvio DEVE ser justificado em "Notas de Execucao" (secao 8).
 ---
 
 ## 5. Contexto de Arquivos (File Context)
-<!-- O modelo está AUTORIZADO a ler SOMENTE os arquivos listados abaixo -->
+<!-- O modelo esta AUTORIZADO a ler SOMENTE os arquivos listados abaixo.
+EXCECAO: os arquivos das skills declaradas na secao 9 (Skills e MCPs) sao
+automaticamente autorizados para leitura, sem necessidade de constarem desta lista.
+Nenhum outro arquivo fora desta lista pode ser lido. -->
 ### 5.1 Arquivos de Leitura (Referência/Exemplos)
 - `@spec/features/[nome-da-funcionalidade]/prd.md`
 - `@spec/features/[nome-da-funcionalidade]/techspec.md`
@@ -154,6 +157,7 @@ Qualquer desvio DEVE ser justificado em "Notas de Execucao" (secao 8).
 - [ ] Nao ha trechos de codigo comentados ou "TODOs" residuais.
 - [ ] A implementacao respeita a arquitetura descrita no `@spec/features/[nome-da-funcionalidade]/techspec.md`.
 - [ ] Todos os passos da secao 3 estao marcados como concluidos
+- [ ] Evidencia de Skills e MCPs registrada na secao 8 para todos os itens declarados na secao 9.
 - [ ] Esta task foi marcada como DONE no arquivo `./spec/features/[nome-da-funcionalidade]/tasks.md` <!-- O modelo DEVE atualizar este arquivo -->
 
 ### 6.1 Efeitos Colaterais Obrigatórios
@@ -167,3 +171,85 @@ Qualquer desvio DEVE ser justificado em "Notas de Execucao" (secao 8).
 
 ## 8. Notas de Execução (Scratchpad)
 [Uso para decisões técnicas relevantes. Não repetir informações já documentadas]
+
+### Evidencia de Skills e MCPs
+<!--
+OBJETIVO: registrar, ao final da execucao, o que ocorreu com cada item declarado na secao 9.
+
+REGRAS:
+- `Situacao` aceita exatamente uma de tres: `CARREGADO E UTILIZADO`,
+  `CARREGADO E NAO UTILIZADO` ou `INDISPONIVEL`.
+- `CARREGADO E NAO UTILIZADO` exige `Justificativa` preenchida.
+- Todo item declarado na secao 9 deve ter exatamente uma linha nesta tabela.
+- Quando a task nao possuir a secao 9 (formato anterior), registrar a ausencia da
+  secao nesta mesma subseccao e prosseguir.
+- O registro completo e criterio de aceite bloqueante: a task NAO pode ser marcada
+  como DONE sem ele.
+- `Passos` referencia os passos da secao 3 em que o item foi efetivamente aplicado,
+  ou `N/A` quando nao houve aplicacao.
+
+MODELO:
+
+| Item | Tipo | Origem | Situacao | Passos | Justificativa |
+|:---|:---|:---|:---|:---|:---|
+| techspec-generator | SKILL | PROJETO | CARREGADO E UTILIZADO | Passo 2, Passo 3 | - |
+| product-manager | SKILL | GLOBAL | CARREGADO E NAO UTILIZADO | N/A | Passo 1 foi resolvido sem necessidade da skill |
+| context7 | MCP | GLOBAL | INDISPONIVEL | N/A | Servidor nao conectado nesta sessao |
+
+ANTI-PADROES:
+- NUNCA marcar a task como DONE com a tabela vazia ou incompleta.
+- NUNCA usar situacao fora do dominio das tres permitidas.
+- NUNCA registrar credenciais, tokens ou chaves de API de servidores MCP.
+-->
+
+| Item | Tipo | Origem | Situacao | Passos | Justificativa |
+|:---|:---|:---|:---|:---|:---|
+
+---
+
+## 9. Skills e MCPs
+<!--
+OBJETIVO: declarar nominalmente quais skills e MCPs devem ser carregados e utilizados
+nesta task especifica.
+
+REGRAS:
+- Esta secao e OBRIGATORIA. E PROIBIDO omiti-la, deixa-la em branco ou manter placeholders.
+- Cinco campos obrigatorios por item: nome, `Tipo`, `Origem`, `Motivo` e `Passos de Aplicacao`.
+- `Tipo` aceita exatamente `SKILL` ou `MCP`. `Origem` aceita exatamente `PROJETO` ou `GLOBAL`.
+- `Motivo` deve citar explicitamente ao menos um passo, contrato (CT-XXX) ou
+  requisito (RF-XXX) desta task.
+- `Passos de Aplicacao` deve referenciar passos existentes na secao 3 desta task.
+- Itens nao pertinentes a esta task NAO podem ser declarados aqui.
+- Quando nenhum item for pertinente, usar a variante de declaracao de ausencia com justificativa.
+
+MODELO (caso com itens):
+
+- [ ] **techspec-generator**
+    - *Tipo:* SKILL
+    - *Origem:* PROJETO
+    - *Motivo:* Passo 2 exige modelagem de contratos conforme CT-003 da techspec
+    - *Passos de Aplicacao:* Passo 2, Passo 3
+
+- [ ] **context7**
+    - *Tipo:* MCP
+    - *Origem:* GLOBAL
+    - *Motivo:* Passo 3 integra a biblioteca X, cuja documentacao oficial e necessaria
+    - *Passos de Aplicacao:* Passo 3
+
+MODELO (caso de ausencia):
+
+Nenhuma skill ou MCP aplicavel a esta task.
+Justificativa: [motivo]
+
+ANTI-PADROES:
+- NUNCA replicar o inventario integral de skills e MCPs nesta secao.
+- NUNCA declarar item sem os cinco campos preenchidos.
+- NUNCA registrar credenciais, tokens ou chaves de API de servidores MCP;
+  apenas nome e finalidade.
+-->
+
+{{SKILLS_MCPS_CONTENT}}
+
+---
+
+**Template Version:** 0.1.0

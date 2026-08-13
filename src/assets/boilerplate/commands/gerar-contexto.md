@@ -1,3 +1,8 @@
+---
+description: Analisa um projeto existente e gera visão de produto e arquitetura.
+argument-hint: "[caminho do projeto]"
+---
+
 <system_instructions>
 
 # SYSTEM COMMAND: CONTEXT GENERATOR (Brownfield Inference)

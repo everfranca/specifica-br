@@ -1,48 +1,105 @@
 import chalk from 'chalk';
 import path from 'path';
-import type { CopyResult } from '../types/init.js';
+import type { CopyResult, CopyTarget, TargetKind } from '../types/init.js';
+import { shortenPath } from './path-resolver.js';
+
+const KIND_LABELS: Record<TargetKind, string> = {
+  commands: 'Comandos',
+  skills: 'Skills',
+  templates: 'Templates'
+};
+
+/**
+ * Caminhos dentro do projeto saem relativos (`specs/templates/`) e os de fora
+ * com `~` no lugar do home (`~/.claude/commands/`).
+ */
+export function displayPath(target: string): string {
+  const relative = path.relative(process.cwd(), target);
+
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return relative;
+  }
+
+  return shortenPath(target);
+}
+
+/**
+ * `~/.agents/skills/ (Gemini CLI, OpenCode)` -- deixa explicito quando um mesmo
+ * diretorio atende mais de uma ferramenta.
+ */
+export function describeTarget(target: CopyTarget): string {
+  return `${displayPath(target.dir)} (${target.tools.join(', ')})`;
+}
+
+export function showTargetsPreview(targets: CopyTarget[]): void {
+  for (const kind of ['commands', 'skills', 'templates'] as const) {
+    const ofKind = targets.filter(target => target.kind === kind);
+
+    if (ofKind.length === 0) {
+      continue;
+    }
+
+    console.log(chalk.gray(`  ${KIND_LABELS[kind]}:`));
+    ofKind.forEach(target => {
+      console.log(chalk.gray(`    • ${describeTarget(target)}`));
+    });
+  }
+}
 
 export function showSuccessMessage(copyResult: CopyResult): void {
   console.log('');
   console.log(chalk.green.bold('✓ Estrutura SDD criada com sucesso!'));
   console.log('');
-  console.log(chalk.gray('Diretórios criados:'));
-  if (copyResult.commandsDir) {
-    console.log(chalk.gray(`  • ${copyResult.commandsDir}`));
-  }
-  if (copyResult.skillsDir) {
-    console.log(chalk.gray(`  • ${copyResult.skillsDir}`));
-  }
-  if (copyResult.templatesDir) {
-    console.log(chalk.gray(`  • ${copyResult.templatesDir}`));
-  }
+  console.log(chalk.gray(
+    copyResult.scope === 'global'
+      ? 'Instalação global (compartilhada por todos os projetos):'
+      : 'Instalação no projeto atual:'
+  ));
   console.log('');
-  if (copyResult.commandsCopied.length > 0) {
-    console.log(chalk.gray('Arquivos de comandos copiados:'));
-    copyResult.commandsCopied.forEach(file => {
-      console.log(chalk.gray(`  • ${file}`));
+
+  for (const kind of ['commands', 'skills', 'templates'] as const) {
+    const ofKind = copyResult.targets.filter(target => target.kind === kind);
+
+    if (ofKind.length === 0) {
+      continue;
+    }
+
+    for (const target of ofKind) {
+      console.log(chalk.gray(`${KIND_LABELS[kind]} — ${describeTarget(target)}`));
+      target.files.forEach(file => {
+        console.log(chalk.gray(`  • ${file}`));
+      });
+      console.log('');
+    }
+  }
+
+  if (copyResult.projectCleanup.removed.length > 0) {
+    console.log(chalk.gray('Instalação antiga removida do projeto:'));
+    copyResult.projectCleanup.removed.forEach(entry => {
+      console.log(chalk.gray(`  • ${displayPath(entry)}`));
     });
     console.log('');
   }
-  if (copyResult.skillsCopied.length > 0) {
-    console.log(chalk.gray('Arquivos de skills copiados:'));
-    copyResult.skillsCopied.forEach(file => {
-      console.log(chalk.gray(`  • ${file}`));
-    });
+
+  copyResult.projectCleanup.keptDirs.forEach(dir => {
+    console.log(chalk.yellow(`Atenção: ${displayPath(dir)} ainda contém arquivos que não são do specifica-br`));
+    console.log(chalk.yellow('e por isso foi mantido. Revise o conteúdo restante manualmente.'));
     console.log('');
-  }
-  if (copyResult.templatesCopied.length > 0) {
-    console.log(chalk.gray('Arquivos de templates copiados:'));
-    copyResult.templatesCopied.forEach(file => {
-      console.log(chalk.gray(`  • ${file}`));
-    });
+  });
+
+  if (copyResult.scope === 'global') {
+    console.log(chalk.gray('Os comandos e skills já estão disponíveis em qualquer projeto —'));
+    console.log(chalk.gray('não é preciso rodar o init novamente a cada repositório.'));
     console.log('');
-  }
-  if (copyResult.commandsDir) {
-    const rootDir = copyResult.commandsDir.split(path.sep)[0];
-    console.log(chalk.gray('Para começar, navegue até o diretório de comandos:'));
-    console.log(chalk.gray(`  cd ${rootDir}`));
-    console.log('');
+  } else {
+    const commandsTarget = copyResult.targets.find(target => target.kind === 'commands');
+
+    if (commandsTarget) {
+      const relative = path.relative(process.cwd(), commandsTarget.dir) || '.';
+      console.log(chalk.gray('Para começar, navegue até o diretório de comandos:'));
+      console.log(chalk.gray(`  cd ${relative}`));
+      console.log('');
+    }
   }
 }
 

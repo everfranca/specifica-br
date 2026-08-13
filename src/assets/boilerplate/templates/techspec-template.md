@@ -1303,4 +1303,59 @@ REGRAS DE ATOMICIDADE:
 
 ---
 
-**Template Version:** 0.3.0
+## 9. Skills e MCPs Utilizados [Obrigatorio]
+
+<!-- INSTRUÇÕES DE PREENCHIMENTO:
+OBJETIVO: Registrar quais skills e MCPs embasaram as decisões técnicas deste
+documento, tornando a procedência das decisões auditável.
+
+FORMATO: Tabela Markdown com cinco colunas fixas (caso com itens) OU bloco de
+declaração de ausência (caso nenhum item seja pertinente ou o inventário esteja vazio).
+
+REGRAS:
+- Esta seção é OBRIGATÓRIA. É PROIBIDO omiti-la, deixá-la em branco ou manter placeholders.
+- Uma linha por item carregado ou indisponível.
+- Coluna `Tipo` aceita exatamente `SKILL` ou `MCP`.
+- Coluna `Origem` aceita exatamente `PROJETO` ou `GLOBAL`.
+- Coluna `Situacao` aceita exatamente `UTILIZADO` ou `INDISPONIVEL`.
+- Quando `Situacao` for `INDISPONIVEL`, a coluna `Secoes/Decisoes Embasadas` deve conter `Nenhuma`.
+- Quando nenhum item for pertinente ou o inventário estiver vazio, usar a variante
+  de declaração de ausência com justificativa (NÃO usar a tabela).
+
+MODELO (caso com itens):
+
+## 9. Skills e MCPs Utilizados [Obrigatorio]
+
+| Nome | Tipo | Origem | Situacao | Secoes/Decisoes Embasadas |
+|:---|:---|:---|:---|:---|
+| techspec-generator | SKILL | PROJETO | UTILIZADO | Secoes 2, 3 e 4: design de componentes e contratos |
+| context7 | MCP | GLOBAL | INDISPONIVEL | Nenhuma |
+
+MODELO (caso de ausência):
+
+## 9. Skills e MCPs Utilizados [Obrigatorio]
+
+Nenhuma skill ou MCP aplicavel a esta especificacao tecnica.
+Justificativa: [motivo]
+
+EXEMPLO BOM:
+| techspec-generator | SKILL | PROJETO | UTILIZADO | Secao 4: estrutura de contratos com ID, origem e schemas |
+(a coluna de seções embasadas cita seções específicas e o que foi embasado, permitindo auditoria)
+
+EXEMPLO RUIM:
+| techspec-generator | SKILL | PROJETO | UTILIZADO | Ajudou na especificacao |
+(não identifica seções nem decisões; não permite auditoria)
+
+ANTI-PATTERNS:
+- NUNCA omitir a seção quando não houver itens: usar a declaração de ausência.
+- NUNCA transcrever credenciais, tokens, chaves de API ou valores de variáveis de
+  ambiente encontrados em arquivos de configuração de MCP. Registrar apenas nome do
+  servidor e finalidade.
+- NUNCA registrar item que não embasou nenhuma decisão como `UTILIZADO`.
+-->
+
+{{SKILLS_MCPS_CONTENT}}
+
+---
+
+**Template Version:** 0.4.0
