@@ -1,3 +1,8 @@
+---
+description: Faz code review de uma branch, arquivo ou codebase e gera relatório.
+argument-hint: "[branch, arquivo ou diretório]"
+---
+
 <system_instructions>
 
     # SYSTEM COMMAND: CODE REVIEWER (Análise técnica de código)

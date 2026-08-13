@@ -3,30 +3,51 @@
     "name": "ClaudeCode",
     "commands": ".claude/commands/",
     "skills": ".claude/skills/",
-    "templates": "specs/templates/"
+    "templates": "specs/templates/",
+    "global": {
+      "commands": { "base": "home", "path": ".claude/commands/" },
+      "skills": { "base": "home", "path": ".claude/skills/" }
+    }
   },
   {
     "name": "Cursor",
     "commands": ".cursor/commands/",
     "skills": ".cursor/skills/",
-    "templates": "specs/templates/"
+    "templates": "specs/templates/",
+    "global": {
+      "commands": { "base": "home", "path": ".cursor/commands/" },
+      "skills": { "base": "home", "path": ".cursor/skills/" }
+    }
   },
   {
     "name": "Gemini CLI",
     "commands": ".gemini/commands/",
     "skills": ".agents/skills/",
-    "templates": "specs/templates/"
+    "templates": "specs/templates/",
+    "global": {
+      "commands": { "base": "home", "path": ".gemini/commands/" },
+      "skills": { "base": "home", "path": ".agents/skills/" }
+    }
   },
   {
     "name": "Kiro",
     "commands": ".kiro/commands/",
     "skills": ".kiro/skills/",
-    "templates": "specs/templates/"
+    "templates": "specs/templates/",
+    "global": {
+      "commands": { "base": "home", "path": ".kiro/commands/" },
+      "skills": { "base": "home", "path": ".kiro/skills/" }
+    }
   },
   {
     "name": "OpenCode",
-    "commands": ".opencode/commands/",
+    "commands": ".opencode/command/",
+    "legacyCommands": ".opencode/commands/",
     "skills": ".agents/skills/",
-    "templates": "specs/templates/"
+    "templates": "specs/templates/",
+    "global": {
+      "commands": { "base": "config", "path": "opencode/command/" },
+      "skills": { "base": "home", "path": ".agents/skills/" }
+    }
   }
 ]

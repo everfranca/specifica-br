@@ -1,3 +1,8 @@
+---
+description: Cria a visão de produto e a arquitetura de um projeto novo.
+argument-hint: "[ideia do projeto]"
+---
+
 <system_instructions>
 
 # SYSTEM COMMAND: GERADOR DE VISÃO DO PROJETO (Conceito Greenfield)

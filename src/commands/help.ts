@@ -8,7 +8,9 @@ function showCompleteHelp(): void {
   console.log('');
   console.log(chalk.yellow('1. Inicialização:'));
   console.log(chalk.white('   $ specifica init'));
-  console.log(chalk.gray('   Cria estrutura de diretórios e templates no projeto.'));
+  console.log(chalk.gray('   Instala comandos e skills no diretório global da ferramenta de IA'));
+  console.log(chalk.gray('   (uma vez por máquina) e cria os templates em specs/ no projeto.'));
+  console.log(chalk.gray('   Use --local para instalar tudo dentro do projeto atual.'));
   console.log('');
   console.log(chalk.yellow('2. Definição do Contexto:'));
   console.log(chalk.gray('   Escolha baseada no tipo de projeto:'));
@@ -74,7 +76,7 @@ function runHelpCommand(options: { completo?: boolean }): void {
     console.log(chalk.white('  -h, --help        display help for command'));
     console.log('');
     console.log(chalk.cyan.bold('Commands:'));
-    console.log(chalk.white('  init              Inicializa estrutura SDD no projeto atual'));
+    console.log(chalk.white('  init              Instala comandos e skills SDD no diretório global (--local para o projeto)'));
     console.log(chalk.white('  help [command]    display help for command'));
     console.log(chalk.white('  upgrade           Atualiza templates e comandos (em breve)'));
     console.log('');
