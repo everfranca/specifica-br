@@ -227,6 +227,164 @@ argument-hint: "[caminho do prd.md] [caminho do techspec.md]"
             **PROIBIDO**: registrar credenciais, tokens ou chaves de API de servidores MCP.
             Declarar apenas nome do servidor e finalidade.
 
+        12. **CRUZAMENTO COM OS DOCUMENTOS CORE** (Obrigatorio):
+
+**12.1 PRINCIPIO:** antes do Checkpoint com o usuario, as decisoes registradas no `prd.md` e no `techspec.md` da feature em curso sao cruzadas contra os documentos CORE existentes no repositorio, de modo que a documentacao de referencia do projeto nao continue descrevendo um projeto que deixou de existir. Esta etapa e **estritamente de leitura**: nenhum documento CORE pode ser alterado durante a geracao de tasks. A alteracao ocorre exclusivamente na execucao da task de sincronizacao gerada a partir de divergencias aprovadas.
+
+**12.2 Alvos do inventario (exatamente quatro, verificados na raiz do repositorio em execucao):**
+
+| Alvo logico | Caminho | Regra de resolucao |
+|:---|:---|:---|
+| `product_vision` | `specs/core/product_vision.md` | Caminho unico |
+| `architecture` | `specs/core/architecture.md` | Caminho unico |
+| `readme` | `README.md` | Caminho unico, raiz do repositorio |
+| `guia_agentes` | `AGENTS.md` ou `CLAUDE.md` | Alvo logico unico. Precedencia para `AGENTS.md` quando ambos existirem; `CLAUDE.md` so e considerado quando `AGENTS.md` estiver ausente |
+
+Cada alvo existente e lido integralmente. Cada alvo inexistente e registrado com estado `AUSENTE` e ignorado, **sem erro, sem aviso bloqueante e sem pergunta ao usuario**. Um alvo que exista mas nao possa ser lido e registrado como `NAO_INSPECIONADO`.
+
+Formato obrigatorio de apresentacao do inventario:
+
+```
+| Alvo | Caminho | Estado |
+|:---|:---|:---|
+| Visao de Produto | specs/core/product_vision.md | AUSENTE |
+| Arquitetura | specs/core/architecture.md | ENCONTRADO |
+| README | README.md | ENCONTRADO |
+| Guia de Agentes | AGENTS.md | AUSENTE |
+```
+
+**12.3 Deteccao de metadata (criterio literal):** o alvo tem metadata quando, e somente quando, contiver uma tabela iniciada por `| Metadata | Details |` que inclua uma linha cuja primeira coluna seja `**Data**`. Nenhum outro formato de datacao e reconhecido: rodapes como `**Ultima Atualizacao**` NAO sao tratados como equivalentes.
+
+**12.4 Categorias de extracao das decisoes:** leia integralmente o `prd.md` e o `techspec.md` e extraia apenas decisoes enquadraveis em uma das quatro categorias abaixo.
+
+| Codigo | Categoria | Fonte tipica | Documento CORE correspondente |
+|:---|:---|:---|:---|
+| `STACK` | Stack, dependencias e versoes | Tech Spec secoes 1, 3.3 | `specs/core/architecture.md` |
+| `TECNICO` | Camadas, padroes e invariantes tecnicos | Tech Spec secoes 2, 5, 7 | `specs/core/architecture.md`, guia de agentes |
+| `PRODUTO` | Personas, escopo, proposta de valor e metricas | PRD secoes 2, 3, 6 | `specs/core/product_vision.md` |
+| `INTERFACE` | Interface publica e operacao (comandos, flags, instalacao, uso) | PRD secao 4, Tech Spec secao 4 | `README.md`, guia de agentes |
+
+Decisao que nao se enquadre em nenhuma das quatro categorias e **descartada** e nao gera divergencia. Cada decisao extraida referencia obrigatoriamente `arquivo_origem`, `secao_origem` e `trecho` citado literalmente.
+
+**12.5 Geracao e classificacao das divergencias:** cada decisao extraida e comparada ao conteudo do documento CORE correspondente segundo a tabela de 12.4.
+
+| Condicao no documento CORE | Tipo resultante |
+|:---|:---|
+| A decisao nao consta (omissao), e nao ha afirmacao contraria | `EVOLUCAO` |
+| O documento afirma explicitamente algo incompativel com a decisao | `CONFLITO` |
+| A decisao ja consta de forma equivalente | Nenhuma divergencia e gerada |
+
+A classificacao e **binaria e derivada da evidencia**: existe trecho contrario no CORE, e `CONFLITO`; nao existe, e `EVOLUCAO`.
+
+Cada divergencia recebe identificador sequencial `DIV-XXX`, com tres digitos a partir de `DIV-001`, e possui **6 campos obrigatorios**:
+
+1. `id` - identificador `DIV-XXX`
+2. `documento_alvo` - documento CORE a alterar, com estado `ENCONTRADO`
+3. `secao_alvo` - secao do documento CORE afetada
+4. `evidencia` - `arquivo_origem` + `secao_origem` + `trecho` citado literalmente
+5. `categoria` - uma das quatro categorias de 12.4
+6. `tipo` - `EVOLUCAO` ou `CONFLITO`
+
+Divergencia com qualquer um dos 6 campos ausente ou preenchido com placeholder e **descartada antes da apresentacao**, com a mensagem MSG-005, e nao pode ser aprovada nem virar sub-tarefa.
+
+**12.6 Mensagens obrigatorias desta etapa.** Todos os erros abaixo sao **nao bloqueantes**: nenhuma etapa deste cruzamento pode impedir a conclusao da geracao de tasks.
+
+| ID | Gatilho | Severidade | Mensagem |
+|:---|:---|:---|:---|
+| MSG-001 | Nenhum dos quatro alvos CORE existe | Baixa | `Nenhum documento CORE encontrado. Cruzamento não aplicável.` |
+| MSG-002 | Alvo existe mas não pôde ser lido | Média | `Documento CORE [caminho] não pôde ser inspecionado. Os demais documentos foram cruzados.` |
+| MSG-003 | Feature sem `techspec.md` | Média | `Tech Spec não encontrada. O cruzamento cobriu apenas as decisões de produto do PRD.` |
+| MSG-004 | Feature sem `prd.md` | Alta | `PRD não encontrado. Cruzamento com os documentos CORE não executado.` |
+| MSG-005 | Divergência sem evidência completa | Média | `Divergência descartada por evidência incompleta.` |
+| MSG-006 | CORE existe e nenhuma divergência identificada | Baixa | `Documentos CORE alinhados às decisões desta feature.` |
+
+Emitida a MSG-001, o cruzamento e integralmente pulado e a geracao de tasks prossegue. Emitida a MSG-004, o cruzamento nao e executado e a geracao prossegue sem task de sincronizacao. Emitida a MSG-006, nenhuma lista de divergencias e apresentada e nenhuma task de sincronizacao e gerada.
+
+        13. **GERACAO DA TASK DE SINCRONIZACAO** (Obrigatorio):
+
+**13.1 Formato obrigatorio de apresentacao no Checkpoint.** O plano de tasks e a lista `DIV-XXX` sao apresentados na **MESMA mensagem**, no mesmo checkpoint ja exigido pela regra critica 5, sem rodada de aprovacao separada. Divergencias `CONFLITO` recebem o prefixo `[CONFLITO]` e sao posicionadas no topo da lista, antes das `EVOLUCAO`.
+
+```
+PLANO DE TASKS
+  task-1.md  [titulo] (CT-XXX)
+  task-2.md  [titulo] (CT-XXX)
+  task-3.md  Sincronizar documentos CORE
+
+DIVERGENCIAS CORE (indique quais aprovar)
+
+  DIV-001 [CONFLITO]  architecture.md -> secao "2.1 Backend"
+     Categoria: Stack, dependencias e versoes
+     Evidencia: techspec.md, secao 3.3 - "adocao da biblioteca X na versao 2.0"
+     No CORE consta: "biblioteca X na versao 1.4"
+
+  DIV-002 [EVOLUCAO]  README.md -> secao "Comandos Basicos"
+     Categoria: Interface publica e operacao
+     Evidencia: prd.md, secao 4 RF-003 - "nova flag --dry-run"
+     No CORE consta: omissao (nenhuma mencao a --dry-run)
+
+Responda com o DE ACORDO do plano e os IDs que aprova.
+```
+
+**13.2 Aprovacao item a item.** **Nenhuma divergencia e aprovada por padrao, por inferencia ou por silencio.** A entrada desta etapa e o "DE ACORDO" do plano acompanhado dos IDs `DIV-XXX` aprovados. Toda divergencia nao citada explicitamente na resposta do usuario e tratada como **DESCARTADA**. Divergencias DESCARTADAS nao aparecem em nenhum artefato gerado.
+
+**13.3 Unicidade e posicao.** Havendo ao menos uma divergencia aprovada, gera-se **exatamente uma** task de sincronizacao por execucao, independentemente do numero de divergencias aprovadas. Ela e acrescentada como **ultimo item** da lista de tasks da feature, recebe o proximo numero sequencial (`task-N.md`) e uma linha propria em `tasks.md`, exatamente como as demais.
+
+**13.4 Mapeamento sobre o `task-template.md` vigente.** A task de sincronizacao e uma task como outra qualquer e obedece ao template vigente. O `task-template.md` **nao e alterado**.
+
+| Secao do `task-template.md` | Conteudo na task de sincronizacao |
+|:---|:---|
+| Tabela de metadata | Todas as colunas preenchidas: Status `TODO`, Data, Task, Feature, Referencia PRD, Referencia Tech Spec |
+| 1. Contexto e Objetivo | Objetivo da sincronizacao e citacao dos `DIV-XXX` aprovados |
+| 2.1 Funcionais | Um item por divergencia aprovada, no formato `- [ ] (DIV-XXX) [descricao da alteracao]` |
+| 2.3 Contratos | Nao aplicavel a esta task; declarar `Nao aplicavel: esta task edita documentacao, nao implementa contratos da secao 4 do techspec.md` |
+| 3. Plano de Execucao | **Uma sub-tarefa (Passo) por documento CORE impactado** |
+| 5.1 Arquivos de Leitura | `prd.md`, `techspec.md` e cada documento CORE impactado |
+| 5.2 Arquivos para Escrita | **Exclusivamente** os documentos CORE impactados; nenhum outro |
+| 6. Criterios de Aceite | Criterios do template, mais os criterios especificos de edicao descritos em 13.6 |
+| 7. Arquivos Relevantes | Documentos CORE impactados |
+| 9. Skills e MCPs | Preenchida conforme as regras criticas 10 e 11 ja existentes, ou com declaracao de ausencia e justificativa |
+
+**13.5 Schema obrigatorio de cada sub-tarefa da secao 3 da task gerada:**
+
+```
+- [ ] **Passo 1: Sincronizar specs/core/architecture.md**
+    - *Acao:* Editar EXCLUSIVAMENTE a secao "2.1 Backend" para refletir DIV-001,
+      e a secao "3.2 Padroes Arquiteturais Especificos" para refletir DIV-004.
+      Em seguida atualizar a linha **Data** da tabela de metadata para a data da execucao.
+    - *Divergencias:* DIV-001, DIV-004
+    - *Arquivos Alvo:* `specs/core/architecture.md`
+    - *Atualiza linha Data:* Sim (documento possui tabela de metadata)
+    - *Criterio de Saida:* Secoes indicadas refletem as decisoes citadas; linha **Data**
+      atualizada; campo **Status** inalterado; demais secoes byte-identicas ao original.
+```
+
+**VALIDACOES BLOQUEANTES NA GERACAO** (verificar antes de gravar a task de sincronizacao):
+- [ ] O numero de sub-tarefas e **exatamente igual** ao numero de documentos CORE distintos referenciados pelas divergencias aprovadas.
+- [ ] Toda sub-tarefa referencia ao menos um `DIV-XXX`.
+- [ ] A tabela de metadata da task tem todas as colunas preenchidas.
+- [ ] A secao 9 esta preenchida ou traz declaracao explicita de ausencia.
+- Se qualquer resposta = NAO -> corrigir antes de gravar.
+
+**13.6 Regras de edicao que a task gerada DEVE carregar em seu proprio conteudo.** A task de sincronizacao e auto-suficiente: as regras abaixo sao transcritas nela, de modo que seu executor nao precise reabrir o PRD e a Tech Spec.
+
+| Alteracao | Condicao | Comportamento |
+|:---|:---|:---|
+| (a) Edicao de conteudo | Sempre | Editar **exclusivamente** as secoes listadas nas divergencias aprovadas, preservando integralmente o restante do documento |
+| (b) Atualizacao de data | Somente quando o documento possuir a tabela de metadata do criterio 12.3 | Atualizar a linha `**Data**` para a data da execucao, no formato `dd/MM/aaaa` ja usado pelos documentos CORE |
+
+- O campo `**Status**` do documento CORE permanece **inalterado** em qualquer hipotese.
+- Nenhum documento CORE inexistente e criado.
+- Nenhuma sincronizacao no sentido inverso: `prd.md` e `techspec.md` nao sao reescritos.
+- Documento CORE sem tabela de metadata recebe apenas a alteracao (a), em comportamento silencioso, sem nenhuma mensagem ao usuario (MSG-009).
+
+| ID | Gatilho | Severidade | Mensagem |
+|:---|:---|:---|:---|
+| MSG-007 | Todas as divergências descartadas pelo usuário | Baixa | `Nenhuma divergência aprovada. Task de sincronização não gerada.` |
+| MSG-008 | Seção alvo não localizada durante a execução | Média | `Seção [nome] não localizada em [caminho]. Atualização não aplicada — revisar manualmente.` |
+| MSG-009 | Documento CORE sem tabela de metadata | Baixa | Nenhuma mensagem; comportamento silencioso |
+
+Emitida a MSG-007, nenhuma task de sincronizacao e gerada, nenhum documento CORE e alterado e a geracao de tasks prossegue normalmente. Emitida a MSG-008 durante a execucao da task, a sub-tarefa e registrada como nao aplicada, o documento e preservado intacto e as demais sub-tarefas prosseguem.
+
     </critical_rules>
 
     <input_data>
@@ -242,8 +400,9 @@ argument-hint: "[caminho do prd.md] [caminho do techspec.md]"
                  - Quebre em passos lógicos e sequenciais.
                  - Para cada passo, pergunte-se: "As instruções são auto-suficientes? Um executor conseguiria realizar a tarefa apenas lendo este arquivo, sem contexto adicional?" Se a resposta for "não", detalhe mais.
         3.  **Descoberta de Skills e MCPs**: Execute a regra crítica 10 (BLOCO-DESC), levantando o inventário nos escopos PROJETO e GLOBAL, e aplique a regra crítica 11 para selecionar, task a task, os itens pertinentes. Esta etapa DEVE ocorrer antes do Checkpoint com o usuário.
-        4.  **Checkpoint**: Valide o plano com o usuário (apresente apenas a lista de arquivos).
-        5.  **Geração**: Após aprovação, crie os arquivos Markdown completos.
+        4.  **Cruzamento com os Documentos CORE**: Execute a regra critica 12 (inventario dos quatro alvos, extracao das decisoes, cruzamento e classificacao) e prepare a task de sincronizacao conforme a regra critica 13. Esta etapa DEVE ocorrer ANTES do Checkpoint com o usuario e e estritamente de leitura.
+        5.  **Checkpoint**: Valide o plano com o usuário apresentando, na MESMA mensagem, a lista de arquivos de task e a lista de divergências DIV-XXX, no formato obrigatório da regra crítica 13.1.
+        6.  **Geração**: Após aprovação, crie os arquivos Markdown completos.
     </execution_flow>
 
      </templates>
@@ -274,7 +433,9 @@ argument-hint: "[caminho do prd.md] [caminho do techspec.md]"
 			    TODAS AS COLUNAS DEVEM SER OBRIGATÓRIAMENTE PREENCHIDAS**
 		** - TODA TASK GERADA DEVE CONTER A SECAO `## 9. Skills e MCPs` PREENCHIDA, COM OS CINCO CAMPOS OBRIGATORIOS POR ITEM (nome, tipo, origem, motivo e passos de aplicacao), OU COM A DECLARACAO EXPLICITA DE AUSENCIA E JUSTIFICATIVA. E PROIBIDO OMITIR A SECAO, DEIXA-LA EM BRANCO OU MANTER PLACEHOLDERS **
 		** - E PROIBIDO GRAVAR UMA TASK COM ITEM DECLARADO SEM TODOS OS CINCO CAMPOS PREENCHIDOS **
+		** - O INVENTARIO DOS QUATRO ALVOS CORE E EXECUTADO EM 100% DAS EXECUCOES DESTE COMANDO, SEM FLAG, ARGUMENTO OU OPT-IN **
+		** - E PROIBIDO ALTERAR QUALQUER DOCUMENTO CORE DURANTE A GERACAO DE TASKS. A ALTERACAO OCORRE EXCLUSIVAMENTE NA EXECUCAO DA TASK DE SINCRONIZACAO GERADA A PARTIR DE DIVERGENCIAS APROVADAS **
 	</critical>
 
-    **Command Version:** 0.7.0
+    **Command Version:** 0.8.0
 </system_instructions>
