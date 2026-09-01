@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { initCommand } from './commands/init.js';
 import { helpCommand } from './commands/help.js';
 import { upgradeCommand } from './commands/upgrade.js';
+import { executarTasksCommand } from './commands/executar-tasks.js';
+import { configCommand } from './commands/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(
@@ -21,5 +23,9 @@ program
 program.addCommand(initCommand);
 program.addCommand(helpCommand);
 program.addCommand(upgradeCommand);
+program.addCommand(executarTasksCommand);
+program.addCommand(configCommand);
 
-program.parse(process.argv);
+// parseAsync (nao parse): as acoes de executar-tasks e config sao assincronas de
+// ponta a ponta e parse() encerraria o processo antes do fim do lote.
+program.parseAsync(process.argv);

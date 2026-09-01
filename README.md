@@ -120,7 +120,7 @@ specifica-br help --completo
 3. **Geração de PRD:** Define requisitos funcionais e regras de negócio
 4. **Geração de Tech Spec:** Define arquitetura técnica e plano de implementação
 5. **Geração de Tarefas:** Decompõe o plano técnico em tarefas executáveis
-6. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação
+6. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação — individual (`/executar-task`) ou em lote (`specifica-br executar-tasks`)
 7. **Code Review:** Realiza code review do código implementado
 
 **Ferramentas de IA suportadas:**
@@ -129,6 +129,74 @@ specifica-br help --completo
 - Cursor
 - Gemini CLI
 - Kiro
+
+### `specifica-br executar-tasks`
+
+Executa **em lote** todos os arquivos `task-*.md` de uma feature, invocando a CLI da ferramenta de IA uma vez por task, na ordem numérica, pulando as que já estão `DONE`.
+
+```bash
+specifica-br executar-tasks <diretório-da-feature> [opções]
+```
+
+O comando roda **a partir de qualquer diretório de qualquer projeto** e **não copia nenhum arquivo** para dentro do projeto. O único arquivo criado dentro do repositório é `contexto-execucao.md`, escrito pela própria ferramenta de IA; os arquivos de task nunca são modificados.
+
+**Opções (todas com o valor padrão):**
+
+| Opção | Padrão | Descrição |
+|:---|:---|:---|
+| `--tool <slug>` | detectado | Ferramenta de IA: `claudecode`, `cursor`, `gemini-cli`, `kiro`, `opencode` (sem distinção de caixa). Atualiza o registro do projeto. |
+| `--model <modelo>` | `sonnet` | Modelo da ferramenta. |
+| `--effort <nível>` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`. |
+| `--fallback-model <modelo>` | `''` | Modelo de fallback. |
+| `--auto-approve` | `false` | Concede acesso total, sem prompts de permissão. |
+| `--permission-mode <modo>` | `''` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `bypassPermissions`. |
+| `--no-skill-dirs` | dirs ligados | Não adiciona os diretórios de skills como `--add-dir`. |
+| `--max-budget-usd <n>` | `0` | Teto de custo por task em USD (`0` desliga). |
+| `--window-budget-tokens <n>` | `0` | Teto de tokens da janela de execução (`0` desliga). |
+| `--stop-on-failure` | `false` | Interrompe o lote na primeira task com erro. |
+| `--sleep <segundos>` | `0` | Pausa entre tasks. |
+| `--no-cache-tuning` | ligado | Desliga a otimização de cache do prompt. |
+| `--no-context-pack` | ligado | Não constrói nem injeta o Contexto de Execução. |
+| `--pack-model <modelo>` | `sonnet` | Modelo da construção do Contexto de Execução. |
+| `--pack-effort <nível>` | `low` | Esforço da construção do Contexto de Execução. |
+| `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
+| `--tasks <seleção>` | `''` | Seleção de tasks, ex.: `1-3,7`. |
+| `--allow <regra>` | `[]` | Regra adicional de `--allowedTools` (repetível). |
+| `--preflight` | `false` | Executa apenas as verificações prévias e encerra. |
+| `--skip-preflight` | `false` | Pula as verificações prévias. |
+| `--require-cmd <cmd>` | `[]` | Comando que deve existir no PATH (repetível). |
+| `--mcp-timeout <seg>` | `15` | Timeout da verificação de MCPs. |
+| `--no-mcp-check` | ligado | Não verifica os MCPs declarados no preflight. |
+| `--dry-run` | `false` | Mostra o que seria executado sem invocar a CLI. Nenhuma chamada é feita — nem para as tasks, nem para construir o Contexto de Execução. Zero tokens gastos. |
+
+**Onde ficam os registros:** em `~/.specifica-br/logs/<projeto>/`, com um arquivo de eventos (`run_<ID>.jsonl`) e um de erro (`run_<ID>.stderr`) por execução. **Nada é gravado dentro do projeto.**
+
+**Identificação do projeto** (chaveia o registro da ferramenta e o diretório de logs), nesta ordem: (1) nome do repositório remoto `origin` do git; (2) nome do diretório raiz do repositório git; (3) nome do diretório de trabalho atual. O nome é sanitizado para `[A-Za-z0-9._-]` e truncado em 64 caracteres. Dois projetos de mesmo nome compartilham o diretório de registros.
+
+**Layouts** (preferência por máquina, escolhida em `specifica-br config`):
+
+| Layout | Descrição |
+|:---|:---|
+| `coluna` | Uma linha por task; o indicador de andamento vira o rótulo de estado ao terminar. É o padrão. |
+| `moldura` | Cada task dentro de uma moldura, com os campos de início e de consumo destacados. |
+| `regua` | Uma régua horizontal separando as tasks, com os mesmos campos de `coluna`. |
+| `lote` | Visão condensada do lote inteiro. **Sem terminal interativo cai para `coluna`.** |
+
+**Dependências externas obrigatórias:** a CLI da ferramenta de IA no PATH e o comando `/executar-task` instalado para ela (`specifica-br init`). **Nenhum utilitário de shell** — interpretador de comandos, processador de JSON, calculadora ou formatador de colunas — é exigido, em nenhum sistema operacional.
+
+**Limitação de ferramentas desta versão:** apenas **ClaudeCode** tem contrato de execução validado. `cursor`, `gemini-cli`, `kiro` e `opencode` são reconhecidas e **recusadas com mensagem explícita** até que seus contratos sejam preenchidos em versões futuras.
+
+### `specifica-br config`
+
+Exibe e altera duas preferências gravadas em `~/.specifica-br/config.json`: o **layout** (preferência única por máquina, vale para todos os projetos) e a **ferramenta de IA** (registrada **por projeto**). O padrão de layout é `coluna`.
+
+```bash
+specifica-br config                       # exibe a configuração e abre a seleção de layout com pré-visualização dos quatro
+specifica-br config layout <nome>         # grava o layout, sem interação
+specifica-br config ferramenta <slug>     # grava a ferramenta do projeto atual, sem interação
+```
+
+Sem terminal interativo, `specifica-br config` sem argumentos apenas exibe a configuração vigente e encerra. **Não há configuração dentro do repositório do usuário**, nem opção de linha de comando para trocar o layout numa execução isolada.
 
 ### `specifica-br upgrade`
 
@@ -427,6 +495,14 @@ O comando também cruza automaticamente as decisões registradas no PRD e na Tec
 
 Implementa cada tarefa individualmente seguindo a especificação.
 
+Para rodar todas as tasks de uma feature de uma vez, sem invocar a ferramenta de IA task a task manualmente, use a forma em lote:
+
+```bash
+specifica-br executar-tasks [diretório da feature]
+```
+
+Ela percorre os `task-*.md` na ordem numérica, pula os que já estão `DONE`, grava os registros em `~/.specifica-br/logs/<projeto>/` e não escreve nada dentro do projeto. Ver `specifica-br executar-tasks` em **Comandos Básicos** para todas as opções.
+
 Antes de qualquer implementação, o comando carrega as skills e verifica os MCPs declarados na seção 9 da task. Um item indisponível não interrompe a execução: o comando informa a indisponibilidade, registra o fato e prossegue. Ao final, as Notas de Execução da task recebem a evidência de uso, com cada item declarado classificado em uma de três situações: CARREGADO E UTILIZADO, CARREGADO E NAO UTILIZADO (com justificativa) ou INDISPONIVEL. O registro completo é condição para marcar a task como concluída.
 
 ### 7. Code Review
@@ -523,6 +599,8 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
+- `executar-tasks`: `--tool`, `--model` (`sonnet`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--pack-model` (`sonnet`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
+- `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout; `config layout <nome>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento
 

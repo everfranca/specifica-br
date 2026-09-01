@@ -1,4 +1,4 @@
 {
-  "enabledUpgradeCommands": ["init", "help", "upgrade"],
+  "enabledUpgradeCommands": ["init", "help", "upgrade", "executar-tasks", "config"],
   "versionCheckTimeoutMs": 1500
 }
