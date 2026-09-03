@@ -38,6 +38,8 @@ function showCompleteHelp(): void {
   console.log(chalk.yellow('6. Execução de Tarefas:'));
   console.log(chalk.white('   /executar-task [caminho da task]'));
   console.log(chalk.gray('   Implementa cada tarefa individualmente seguindo a especificação.'));
+  console.log(chalk.white('   $ specifica-br executar-tasks [diretório da feature]'));
+  console.log(chalk.gray('   Executa em lote todos os task-*.md da feature, a partir de qualquer projeto.'));
   console.log('');
   console.log(chalk.yellow('7. Code Review:'));
   console.log(chalk.white('   /realizar-codereview'));
@@ -77,6 +79,8 @@ function runHelpCommand(options: { completo?: boolean }): void {
     console.log('');
     console.log(chalk.cyan.bold('Commands:'));
     console.log(chalk.white('  init              Instala comandos e skills SDD no diretório global (--local para o projeto)'));
+    console.log(chalk.white('  executar-tasks    Executa em lote os task-*.md de uma feature'));
+    console.log(chalk.white('  config            Exibe e altera o layout e a ferramenta de IA'));
     console.log(chalk.white('  help [command]    display help for command'));
     console.log(chalk.white('  upgrade           Atualiza templates e comandos (em breve)'));
     console.log('');

@@ -1,0 +1,3 @@
+{"type":"step_start","timestamp":1788286294193,"sessionID":"ses_fa1d4c6a3ffeQm9B2oAqGRSbGF","part":{"id":"prt_05e2b58aa001mU3whhz5HtMctL","type":"step-start"}}
+{"type":"text","timestamp":1788286295120,"sessionID":"ses_fa1d4c6a3ffeQm9B2oAqGRSbGF","part":{"type":"text","text":"ABACAXI-42"}}
+{"type":"step_finish","timestamp":1788286295120,"sessionID":"ses_fa1d4c6a3ffeQm9B2oAqGRSbGF","part":{"type":"step-finish","reason":"stop","tokens":{"total":14533,"input":13176,"output":8,"reasoning":69,"cache":{"write":0,"read":1280}},"cost":0}}

@@ -1,0 +1,3 @@
+{"type":"step_start","timestamp":1788286294193,"sessionID":"ses_9b2eaf104cc1Rt7kLpQwZxYvNa","part":{"id":"prt_27a4d70cc223oW5yjjb7JvOevN","type":"step-start"}}
+{"type":"error","timestamp":1788286294620,"sessionID":"ses_9b2eaf104cc1Rt7kLpQwZxYvNa","part":{"type":"error","message":"ProviderAuthError"}}
+{"type":"step_finish","timestamp":1788286294900,"sessionID":"ses_9b2eaf104cc1Rt7kLpQwZxYvNa","part":{"type":"step-finish","reason":"error","tokens":{"total":210,"input":180,"output":0,"reasoning":0,"cache":{"write":0,"read":30}},"cost":0}}

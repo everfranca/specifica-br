@@ -1,6 +1,6 @@
 {
   "name": "specifica-br",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Ferramenta de automação para desenvolvimento guiado por especificações (Spec Driven Development - SDD) com IA. Otimizado para o ecossistema brasileiro.",
   "repository": {
     "type": "git",
@@ -17,10 +17,13 @@
   },
   "scripts": {
     "build": "tsc && npm run copy:assets && npm run add:shebang",
-    "copy:assets": "npx copyfiles -u 2 \"src/assets/**/*\" dist",
+    "copy:assets": "npx copyfiles -u 2 \"src/assets/**/*\" dist && npx copyfiles -u 1 \"src/assets/tokens.json\" dist",
     "add:shebang": "sed -i '1i#!/usr/bin/env node' dist/index.js",
     "start": "node dist/index.js",
-    "dev": "tsc && npm run copy:assets && npm run add:shebang && node dist/index.js"
+    "dev": "tsc && npm run copy:assets && npm run add:shebang && node dist/index.js",
+    "build:tests": "npm run build && tsc -p tsconfig.test.json",
+    "test": "npm run build:tests && node --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" \"tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.js\""
   },
   "keywords": [
     "spec driven development",

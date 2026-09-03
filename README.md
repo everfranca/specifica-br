@@ -120,7 +120,7 @@ specifica-br help --completo
 3. **Geração de PRD:** Define requisitos funcionais e regras de negócio
 4. **Geração de Tech Spec:** Define arquitetura técnica e plano de implementação
 5. **Geração de Tarefas:** Decompõe o plano técnico em tarefas executáveis
-6. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação
+6. **Execução de Tarefas:** Implementa cada tarefa seguindo a especificação — individual (`/executar-task`) ou em lote (`specifica-br executar-tasks`)
 7. **Code Review:** Realiza code review do código implementado
 
 **Ferramentas de IA suportadas:**
@@ -129,6 +129,109 @@ specifica-br help --completo
 - Cursor
 - Gemini CLI
 - Kiro
+
+### `specifica-br executar-tasks`
+
+Executa **em lote** todos os arquivos `task-*.md` de uma feature, invocando a CLI da ferramenta de IA uma vez por task, na ordem numérica, pulando as que já estão `DONE`.
+
+```bash
+specifica-br executar-tasks <diretório-da-feature> [opções]
+```
+
+O comando roda **a partir de qualquer diretório de qualquer projeto** e **não copia nenhum arquivo** para dentro do projeto. O único arquivo criado dentro do repositório é `contexto-execucao.md`, escrito pela própria ferramenta de IA; os arquivos de task nunca são modificados.
+
+**Opções (todas com o valor padrão):**
+
+| Opção | Padrão | Descrição |
+|:---|:---|:---|
+| `--tool <slug>` | detectado | Ferramenta de IA: `claudecode`, `cursor`, `gemini-cli`, `kiro`, `opencode` (sem distinção de caixa). Atualiza o registro do projeto. |
+| `--model <modelo>` | `sonnet` | Modelo da ferramenta. |
+| `--effort <nível>` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`. |
+| `--fallback-model <modelo>` | `''` | Modelo de fallback. |
+| `--auto-approve` | `false` | Concede acesso total, sem prompts de permissão. |
+| `--permission-mode <modo>` | `''` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `bypassPermissions`. |
+| `--no-skill-dirs` | dirs ligados | Não adiciona os diretórios de skills como `--add-dir`. |
+| `--max-budget-usd <n>` | `0` | Teto de custo em USD (`0` desliga). Além do teto nativo por task, quando a ferramenta o oferece, o próprio comando verifica o custo acumulado entre as tasks, para qualquer ferramenta que reporte custo, e encerra o lote antes de iniciar a task que ultrapassaria o teto. |
+| `--window-budget-tokens <n>` | `0` | Teto de tokens da janela de execução (`0` desliga). |
+| `--stop-on-failure` | `false` | Interrompe o lote na primeira task com erro. |
+| `--sleep <segundos>` | `0` | Pausa entre tasks. |
+| `--no-cache-tuning` | ligado | Desliga a otimização de cache do prompt. |
+| `--no-context-pack` | ligado | Não constrói nem injeta o Contexto de Execução. |
+| `--context-injection <forma>` | `prompt` | Forma de injeção do Contexto de Execução: `prompt` concatena o destilado ao prompt da task; `instructions` declara o caminho do destilado na definição do agente de execução. Só tem efeito no OpenCode. |
+| `--pack-model <modelo>` | `sonnet` | Modelo da construção do Contexto de Execução. |
+| `--pack-effort <nível>` | `low` | Esforço da construção do Contexto de Execução. |
+| `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
+| `--tasks <seleção>` | `''` | Seleção de tasks, ex.: `1-3,7`. |
+| `--allow <regra>` | `[]` | Regra adicional de `--allowedTools` (repetível). |
+| `--preflight` | `false` | Executa apenas as verificações prévias e encerra. |
+| `--skip-preflight` | `false` | Pula as verificações prévias. |
+| `--require-cmd <cmd>` | `[]` | Comando que deve existir no PATH (repetível). |
+| `--mcp-timeout <seg>` | `15` | Timeout da verificação de MCPs. |
+| `--no-mcp-check` | ligado | Não verifica os MCPs declarados no preflight. |
+| `--dry-run` | `false` | Mostra o que seria executado sem invocar a CLI. Nenhuma chamada é feita — nem para as tasks, nem para construir o Contexto de Execução. Zero tokens gastos. |
+
+**Onde ficam os registros:** em `~/.specifica-br/logs/<projeto>/`, com um arquivo de eventos (`run_<ID>.jsonl`) e um de erro (`run_<ID>.stderr`) por execução. **Nada é gravado dentro do projeto.**
+
+**Identificação do projeto** (chaveia o registro da ferramenta e o diretório de logs), nesta ordem: (1) nome do repositório remoto `origin` do git; (2) nome do diretório raiz do repositório git; (3) nome do diretório de trabalho atual. O nome é sanitizado para `[A-Za-z0-9._-]` e truncado em 64 caracteres. Dois projetos de mesmo nome compartilham o diretório de registros.
+
+**Layouts** (preferência por máquina, escolhida em `specifica-br config`):
+
+| Layout | Descrição |
+|:---|:---|
+| `coluna` | Uma linha por task; o indicador de andamento vira o rótulo de estado ao terminar. É o padrão. |
+| `moldura` | Cada task dentro de uma moldura, com os campos de início e de consumo destacados. |
+| `regua` | Uma régua horizontal separando as tasks, com os mesmos campos de `coluna`. |
+| `lote` | Visão condensada do lote inteiro. **Sem terminal interativo cai para `coluna`.** |
+
+**Dependências externas obrigatórias:** a CLI da ferramenta de IA no PATH e o comando `/executar-task` instalado para ela (`specifica-br init`). **Nenhum utilitário de shell** — interpretador de comandos, processador de JSON, calculadora ou formatador de colunas — é exigido, em nenhum sistema operacional.
+
+**Ferramentas com contrato de execução validado:** **ClaudeCode** e **OpenCode**. `cursor`, `gemini-cli` e `kiro` são reconhecidas e **recusadas com mensagem explícita** até que seus contratos sejam preenchidos em versões futuras.
+
+**Como a ferramenta é resolvida**, nesta ordem: (1) `--tool`; (2) ferramenta registrada para o projeto; (3) detecção automática pelos diretórios do projeto; (4) escolha interativa. A ferramenta resolvida é gravada no registro do projeto. Para o OpenCode, a detecção reconhece tanto o diretório atual de comandos `.opencode/command/` quanto o diretório legado `.opencode/commands/`, criado por versões anteriores do `init`: um projeto no layout legado é detectado sem exigir migração, renomeação ou uso de `--tool`, e conta uma única vez ainda que os dois diretórios existam.
+
+**Toda a saída nomeia a ferramenta efetivamente resolvida** — cabeçalho, avisos, erros, resumo e registros —, incluindo a versão da CLI dessa ferramenta. Nenhum texto fixo referente a uma ferramenta aparece quando outra está em uso.
+
+**Capacidades por ferramenta:**
+
+| Capacidade | ClaudeCode | OpenCode |
+|:---|:---:|:---:|
+| Execução não interativa | sim | sim |
+| Modo sem prompt de permissão | sim | sim |
+| Saída estruturada com contagem de tokens | sim | sim |
+| Identificador de sessão | sim | sim |
+| Injeção de contexto no system prompt | sim | sim |
+| Liberação de diretórios de leitura | sim | não |
+| Consulta aos MCPs | sim | sim |
+| Relato de custo em USD | sim | sim |
+| Teto de custo nativo | sim | não |
+| Modelo de fallback | sim | não |
+| Otimização de cache do prompt | sim | não |
+| Relato de permissões negadas | sim | não |
+| Forma de injeção selecionável | não | sim |
+
+**Opções que dependem de capacidade ausente são recusadas com aviso nominal, e o lote prossegue** — nunca são ignoradas em silêncio e nunca causam aborto. Com OpenCode, `--no-skill-dirs`, `--fallback-model` e `--no-cache-tuning` produzem um aviso cada e as funcionalidades correspondentes ficam desativadas para a execução; nenhuma configuração de cache específica de outra ferramenta é repassada ao OpenCode. `--permission-mode` com modo sem equivalente também é recusado com aviso. Do outro lado, `--context-injection` informada para o ClaudeCode é recusada com aviso.
+
+**Permissão durante o lote com OpenCode:** o lote opera com **permissão total**, sobrepondo deliberadamente as regras de permissão configuradas no projeto, inclusive negações explícitas. Sem isso, um projeto que negue a edição de arquivos faria todas as tasks falharem em escrever código. A sobreposição é **relatada nas verificações prévias**, nunca aplicada em silêncio, e vale apenas enquanto o lote executa: **nenhum arquivo é escrito dentro do projeto**, porque a permissão é entregue por um arquivo de apoio mantido em `~/.specifica-br/opencode/` e removido ao final. Regras adicionais informadas por `--allow` são traduzidas para o OpenCode quando têm equivalente, sempre como liberação e nunca como negação; a forma sem equivalente, como as regras de MCP, é recusada com aviso. Sobre `--permission-mode`: `bypassPermissions` é o comportamento padrão do lote e `acceptEdits` é tratado como permissão total sem aviso, porque em lote não há quem responda a uma pergunta. Não informar modo algum nem `--auto-approve` continua sendo ERRO no preflight.
+
+**Teto de custo:** `--max-budget-usd` é verificado pelo próprio comando, antes de iniciar cada task, para **qualquer ferramenta que reporte custo**. Se o custo acumulado do lote já tiver ultrapassado o teto, a próxima task não é iniciada e o lote encerra com o motivo registrado como orçamento de custo. No ClaudeCode a trava nativa por task continua valendo, e essa verificação atua como rede de segurança adicional. Se a ferramenta reportar custo zero durante todo o lote, o resumo avisa uma única vez que o teto não teve efeito.
+
+**Contexto de Execução no OpenCode:** a construção, o reaproveitamento, o teto de tamanho e `--no-context-pack` são os mesmos de qualquer ferramenta. Muda apenas a forma de entrega, escolhida por `--context-injection`: `prompt`, o padrão, concatena o destilado ao prompt da task e é funcionalmente garantida; `instructions` declara o caminho do destilado na definição do agente de execução e tende a preservar a economia de cache, reduzindo o custo por task. As duas entregam o mesmo conteúdo — a diferença observável está nos contadores de cache e no custo registrados, o que permite compará-las com a própria contabilidade da execução. A forma efetivamente usada aparece no cabeçalho. Com `--no-context-pack`, a opção não tem efeito e o cabeçalho exibe o Contexto de Execução como desligado.
+
+**Tokens de raciocínio e permissões negadas no resumo:** o resumo traz um campo de tokens de raciocínio, somado ao total de tokens da execução; para ferramentas que não relatam esse dado, como o ClaudeCode, o campo aparece como `nao reportado`, nunca como zero. A mesma regra vale para permissões negadas: com OpenCode o campo aparece como `n/d`, e o comando nunca afirma que houve zero negações nem estima o número a partir de mensagens de erro.
+
+**Contabilidade parcial:** se parte da saída estruturada de uma task for ilegível, a task é contabilizada com o que pôde ser lido e o comando avisa que a contabilidade pode estar subestimada, em vez de descartar a task ou zerar seus números.
+
+### `specifica-br config`
+
+Exibe e altera duas preferências gravadas em `~/.specifica-br/config.json`: o **layout** (preferência única por máquina, vale para todos os projetos) e a **ferramenta de IA** (registrada **por projeto**). O padrão de layout é `coluna`.
+
+```bash
+specifica-br config                       # exibe a configuração e abre a seleção de layout com pré-visualização dos quatro
+specifica-br config layout <nome>         # grava o layout, sem interação
+specifica-br config ferramenta <slug>     # grava a ferramenta do projeto atual, sem interação
+```
+
+Sem terminal interativo, `specifica-br config` sem argumentos apenas exibe a configuração vigente e encerra. **Não há configuração dentro do repositório do usuário**, nem opção de linha de comando para trocar o layout numa execução isolada.
 
 ### `specifica-br upgrade`
 
@@ -427,6 +530,14 @@ O comando também cruza automaticamente as decisões registradas no PRD e na Tec
 
 Implementa cada tarefa individualmente seguindo a especificação.
 
+Para rodar todas as tasks de uma feature de uma vez, sem invocar a ferramenta de IA task a task manualmente, use a forma em lote:
+
+```bash
+specifica-br executar-tasks [diretório da feature]
+```
+
+Ela percorre os `task-*.md` na ordem numérica, pula os que já estão `DONE`, grava os registros em `~/.specifica-br/logs/<projeto>/` e não escreve nada dentro do projeto. Ver `specifica-br executar-tasks` em **Comandos Básicos** para todas as opções.
+
 Antes de qualquer implementação, o comando carrega as skills e verifica os MCPs declarados na seção 9 da task. Um item indisponível não interrompe a execução: o comando informa a indisponibilidade, registra o fato e prossegue. Ao final, as Notas de Execução da task recebem a evidência de uso, com cada item declarado classificado em uma de três situações: CARREGADO E UTILIZADO, CARREGADO E NAO UTILIZADO (com justificativa) ou INDISPONIVEL. O registro completo é condição para marcar a task como concluída.
 
 ### 7. Code Review
@@ -523,6 +634,8 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
+- `executar-tasks`: `--tool`, `--model` (`sonnet`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--pack-model` (`sonnet`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
+- `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout; `config layout <nome>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento
 
