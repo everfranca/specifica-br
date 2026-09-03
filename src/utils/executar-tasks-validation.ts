@@ -1,6 +1,10 @@
 import { TOOL_SLUGS } from '../types/config.js';
 import type { ToolSlug } from '../types/config.js';
-import type { EffortLevel, PermissionMode } from '../types/executar-tasks.js';
+import type {
+  ContextInjection,
+  EffortLevel,
+  PermissionMode,
+} from '../types/executar-tasks.js';
 import { normalizeToolSlug } from './tool-adapters/tool-registry.js';
 
 /**
@@ -23,6 +27,7 @@ export interface ValidatedOptions {
   sleep: number;
   cacheTuning: boolean;
   contextPack: boolean;
+  contextInjection: ContextInjection;
   packModel: string;
   packEffort: EffortLevel;
   packMaxTokens: number;
@@ -36,8 +41,9 @@ export interface ValidatedOptions {
   dryRun: boolean;
 }
 
-const EFFORT: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-const PERMISSION: readonly string[] = [
+const EFFORT: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CONTEXT_INJECTION: readonly ContextInjection[] = ['prompt', 'instructions'];
+const PERMISSION: readonly PermissionMode[] = [
   'acceptEdits',
   'auto',
   'dontAsk',
@@ -62,20 +68,27 @@ function textoNaoVazio(valor: unknown, padrao: string, nome: string): string {
   return texto;
 }
 
-function enumValido(
+/**
+ * valida `valor` contra um conjunto fechado, devolvendo `padrao` quando ausente.
+ * O generico faz o tipo de retorno derivar do conjunto informado, provando no
+ * compilador o que um `as` apenas afirmaria.
+ */
+function enumValido<T extends string, P extends T | ''>(
   valor: unknown,
-  conjunto: readonly string[],
-  padrao: string,
+  conjunto: readonly T[],
+  padrao: P,
   nome: string
-): string {
+): T | P {
   if (valor === undefined || valor === '') {
     return padrao;
   }
   const texto = String(valor);
-  if (!conjunto.includes(texto)) {
-    throw new Error(`${nome} invalido: ${texto}. Use um de: ${conjunto.join('|')}`);
+  for (const item of conjunto) {
+    if (item === texto) {
+      return item;
+    }
   }
-  return texto;
+  throw new Error(`${nome} invalido: ${texto}. Use um de: ${conjunto.join('|')}`);
 }
 
 function numero(
@@ -142,14 +155,20 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
 
   const model = textoNaoVazio(b.model, 'sonnet', '--model');
   const packModel = textoNaoVazio(b.packModel, 'sonnet', '--pack-model');
-  const effort = enumValido(b.effort, EFFORT, 'medium', '--effort') as EffortLevel;
-  const packEffort = enumValido(b.packEffort, EFFORT, 'low', '--pack-effort') as EffortLevel;
+  const effort = enumValido(b.effort, EFFORT, 'medium', '--effort');
+  const packEffort = enumValido(b.packEffort, EFFORT, 'low', '--pack-effort');
+  const contextInjection = enumValido(
+    b.contextInjection,
+    CONTEXT_INJECTION,
+    'prompt',
+    '--context-injection'
+  );
   const permissionMode = enumValido(
     b.permissionMode,
     PERMISSION,
     '',
     '--permission-mode'
-  ) as PermissionMode | '';
+  );
 
   const fallbackModel = b.fallbackModel === undefined ? '' : String(b.fallbackModel);
   if (fallbackModel !== '' && fallbackModel.trim() === '') {
@@ -195,6 +214,7 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     sleep,
     cacheTuning: b.cacheTuning !== false,
     contextPack: b.contextPack !== false,
+    contextInjection,
     packModel,
     packEffort,
     packMaxTokens,

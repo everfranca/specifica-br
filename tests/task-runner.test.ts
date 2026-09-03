@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'fs-extra';
 
 import { TaskRunner, ajustarPorCapacidades } from '../dist/utils/task-runner.js';
+import { getAdapter, getCapabilities } from '../dist/utils/tool-adapters/tool-registry.js';
 import { AccountingService } from '../dist/utils/accounting.js';
 import { TaskDiscoveryService } from '../dist/utils/task-discovery.js';
 import type { ExecutarTasksOptions, RunEndMotivo, TaskInfo } from '../dist/types/executar-tasks.js';
@@ -18,6 +19,12 @@ const CAPACIDADES_LIGADAS: ToolCapabilities = {
   injecaoDeContextoNoSystemPrompt: true,
   liberacaoDeDiretoriosDeLeitura: true,
   consultaAosMcps: true,
+  relatoDeCustoEmUSD: true,
+  tetoDeCustoNativo: true,
+  modeloDeFallback: true,
+  otimizacaoDeCacheDePrompt: true,
+  relatoDeNegacoesDePermissao: true,
+  formaDeInjecaoSelecionavel: false,
 };
 
 function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions {
@@ -35,6 +42,7 @@ function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions 
     sleep: 0,
     cacheTuning: true,
     contextPack: true,
+    contextInjection: 'prompt',
     packModel: 'sonnet',
     packEffort: 'low',
     packMaxTokens: 8000,
@@ -66,7 +74,9 @@ function resultado(over: Partial<TaskResult> = {}): TaskResult {
     outputTokens: 0,
     cacheCreationInputTokens: 0,
     cacheReadInputTokens: 0,
+    reasoningTokens: null,
     permissionDenials: 0,
+    contabilidadeParcial: false,
     ferramentasNegadas: null,
     rawStdout: '',
     rawStderr: '',
@@ -162,17 +172,32 @@ interface AdapterOver {
     onStderr?: (c: string) => void
   ) => Promise<TaskResult>;
   detectRateLimit?: () => boolean;
+  capacidades?: Partial<ToolCapabilities>;
+}
+
+interface EntradaDeTask {
+  taskPath: string;
+  contextoExecucaoPath: string | null;
+  contextoExecucaoConteudo: string | null;
 }
 
 function fakeAdapter(over: AdapterOver = {}) {
   const chamadas = { runTask: 0 };
+  const entradas: EntradaDeTask[] = [];
   const obj = {
-    capacidades: { ...CAPACIDADES_LIGADAS },
-    buildTaskArgs() {
-      return ['-p', '/executar-task x'];
+    capacidades: { ...CAPACIDADES_LIGADAS, ...(over.capacidades ?? {}) },
+    buildTaskArgs(e: EntradaDeTask) {
+      entradas.push(e);
+      // Espelha CT-031: o destilado, quando presente, viaja no posicional.
+      const posicional =
+        e.contextoExecucaoConteudo === null || e.contextoExecucaoConteudo === ''
+          ? e.taskPath
+          : `${e.taskPath}\n\n${e.contextoExecucaoConteudo}`;
+      return ['run', posicional];
     },
-    async runTask(e: unknown, cwd: string, onStderr?: (c: string) => void) {
+    async runTask(e: EntradaDeTask, cwd: string, onStderr?: (c: string) => void) {
       chamadas.runTask += 1;
+      entradas.push(e);
       if (over.runTask) {
         return over.runTask(e, cwd, onStderr);
       }
@@ -182,7 +207,7 @@ function fakeAdapter(over: AdapterOver = {}) {
       return over.detectRateLimit ? over.detectRateLimit() : false;
     },
   };
-  return { obj, chamadas };
+  return { obj, chamadas, entradas };
 }
 
 let contadorTmp = 0;
@@ -206,6 +231,12 @@ interface MontarOpcoes {
   accounting?: AccountingService;
   windowBudgetTokens?: number;
   totalTasks?: number;
+  executorConfig?: {
+    aplicarDestilado(destiladoPath: string | null): Promise<void>;
+    remover(): Promise<void>;
+  } | null;
+  packPathInicial?: string | null;
+  ferramenta?: 'claudecode' | 'opencode';
 }
 
 function montar(m: MontarOpcoes = {}) {
@@ -222,7 +253,7 @@ function montar(m: MontarOpcoes = {}) {
     logger: logger.obj as never,
     layout: layout.obj as never,
     opcoes: opcs,
-    ferramenta: 'claudecode',
+    ferramenta: m.ferramenta ?? 'claudecode',
     featureDir: '/tmp/feature',
     projectRoot: '/tmp',
     cwd: '/tmp',
@@ -240,8 +271,9 @@ function montar(m: MontarOpcoes = {}) {
       },
     } as never,
     windowBudgetTokens: m.windowBudgetTokens ?? opcs.windowBudgetTokens,
-    packPathInicial: null,
+    packPathInicial: m.packPathInicial ?? null,
     totalTasks: m.totalTasks ?? 0,
+    executorConfig: m.executorConfig ?? null,
   });
   return { runner, layout, logger, adapter, contextPack, accounting };
 }
@@ -530,7 +562,7 @@ test('capacidade ausente desativa a funcionalidade com AVISO nominal', () => {
   const { opcoes: ajustadas, avisos } = ajustarPorCapacidades(
     opcoes({ windowBudgetTokens: 5000 }),
     { ...CAPACIDADES_LIGADAS, saidaEstruturadaComTokens: false },
-    'cursor'
+    'Cursor'
   );
   assert.ok(avisos.length > 0);
   assert.equal(ajustadas.windowBudgetTokens, 0);
@@ -541,10 +573,139 @@ test('opcao que depende de capacidade ausente e recusada com AVISO, sem abortar'
   const resultado = ajustarPorCapacidades(
     opcoes({ contextPack: true }),
     { ...CAPACIDADES_LIGADAS, injecaoDeContextoNoSystemPrompt: false },
-    'kiro'
+    'Kiro'
   );
   assert.equal(resultado.opcoes.contextPack, false);
   assert.ok(resultado.avisos.some((a) => a.includes('Contexto de Execucao')));
+});
+
+test('capacidades completas do ClaudeCode nao produzem aviso algum', () => {
+  const entrada = opcoes({
+    fallbackModel: 'opus',
+    maxBudgetUsd: 5,
+    windowBudgetTokens: 5000,
+    skillDirs: false,
+    cacheTuning: false,
+  });
+  const resultado = ajustarPorCapacidades(entrada, CAPACIDADES_LIGADAS, 'ClaudeCode');
+
+  assert.deepEqual(resultado.avisos, []);
+  assert.deepEqual(resultado.opcoes, entrada);
+});
+
+test('liberacaoDeDiretoriosDeLeitura ausente avisa sempre e uma unica vez', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ skillDirs: true }),
+    { ...CAPACIDADES_LIGADAS, liberacaoDeDiretoriosDeLeitura: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, [
+    'diretorios extras de skills ignorados: OpenCode nao libera diretorios de leitura',
+  ]);
+  assert.equal(resultado.opcoes.skillDirs, false);
+});
+
+test('liberacaoDeDiretoriosDeLeitura ausente com --no-skill-dirs acrescenta o aviso da opcao', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ skillDirs: false }),
+    { ...CAPACIDADES_LIGADAS, liberacaoDeDiretoriosDeLeitura: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, [
+    'diretorios extras de skills ignorados: OpenCode nao libera diretorios de leitura',
+    '--no-skill-dirs ignorada: OpenCode nao oferece o recurso correspondente',
+  ]);
+});
+
+test('modeloDeFallback ausente recusa --fallback-model uma unica vez', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ fallbackModel: 'opus' }),
+    { ...CAPACIDADES_LIGADAS, modeloDeFallback: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, [
+    '--fallback-model ignorada: OpenCode nao oferece o recurso correspondente',
+  ]);
+  assert.equal(resultado.opcoes.fallbackModel, '');
+});
+
+test('modeloDeFallback ausente sem --fallback-model nao produz aviso', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ fallbackModel: '' }),
+    { ...CAPACIDADES_LIGADAS, modeloDeFallback: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, []);
+});
+
+test('otimizacaoDeCacheDePrompt ausente desliga o ajuste e avisa so com --no-cache-tuning', () => {
+  const semOpcao = ajustarPorCapacidades(
+    opcoes({ cacheTuning: true }),
+    { ...CAPACIDADES_LIGADAS, otimizacaoDeCacheDePrompt: false },
+    'OpenCode'
+  );
+  assert.deepEqual(semOpcao.avisos, []);
+  assert.equal(semOpcao.opcoes.cacheTuning, false);
+
+  const comOpcao = ajustarPorCapacidades(
+    opcoes({ cacheTuning: false }),
+    { ...CAPACIDADES_LIGADAS, otimizacaoDeCacheDePrompt: false },
+    'OpenCode'
+  );
+  assert.deepEqual(comOpcao.avisos, [
+    '--no-cache-tuning ignorada: OpenCode nao oferece o recurso correspondente',
+  ]);
+});
+
+test('relatoDeCustoEmUSD ausente zera o teto de custo sem inventar mensagem', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ maxBudgetUsd: 5, windowBudgetTokens: 5000 }),
+    { ...CAPACIDADES_LIGADAS, relatoDeCustoEmUSD: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, []);
+  assert.equal(resultado.opcoes.maxBudgetUsd, 0);
+  assert.equal(resultado.opcoes.windowBudgetTokens, 5000);
+});
+
+test('tetoDeCustoNativo ausente nao desativa --max-budget-usd nem avisa', () => {
+  const resultado = ajustarPorCapacidades(
+    opcoes({ maxBudgetUsd: 5 }),
+    { ...CAPACIDADES_LIGADAS, tetoDeCustoNativo: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, []);
+  assert.equal(resultado.opcoes.maxBudgetUsd, 5);
+});
+
+test('relatoDeNegacoesDePermissao ausente nao altera opcao nem produz aviso', () => {
+  const entrada = opcoes({ maxBudgetUsd: 5, fallbackModel: 'opus' });
+  const resultado = ajustarPorCapacidades(
+    entrada,
+    { ...CAPACIDADES_LIGADAS, relatoDeNegacoesDePermissao: false },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, []);
+  assert.deepEqual(resultado.opcoes, entrada);
+});
+
+test('formaDeInjecaoSelecionavel presente nao altera opcao nem produz aviso', () => {
+  const entrada = opcoes({ contextPack: true });
+  const resultado = ajustarPorCapacidades(
+    entrada,
+    { ...CAPACIDADES_LIGADAS, formaDeInjecaoSelecionavel: true },
+    'OpenCode'
+  );
+
+  assert.deepEqual(resultado.avisos, []);
+  assert.deepEqual(resultado.opcoes, entrada);
 });
 
 test('--tasks referenciando numero inexistente e rejeitado com a mensagem nominal', () => {
@@ -595,6 +756,7 @@ test('o resumo final do TaskRunner com ClaudeCode congela linha a linha', async 
     '  Tasks executadas   2',
     '  Tasks com erro     0',
     '  Tokens totais      2.400',
+    '  Raciocinio         nao reportado',
     '  Custo acumulado    $0.0000',
     '  Evidencias:',
     '    task-1  sessao=sess-1  tokens=1200  turnos=3  neg=0  ctx=nao',
@@ -637,6 +799,8 @@ test('o evento end congela o conjunto de chaves e os valores gravados', async ()
     output_tokens: 200,
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
+    reasoning_tokens: null,
+    contabilidade_parcial: false,
     sem_certificacao: true,
     tokens_gastos_task: 1200,
     tokens_gastos_acumulado_depois: acumulado,
@@ -646,4 +810,610 @@ test('o evento end congela o conjunto de chaves e os valores gravados', async ()
   });
 
   assert.deepStrictEqual(normalizados, [esperado('task-1.md', 1200), esperado('task-2.md', 2400)]);
+});
+
+// --- CT-030: forma de injecao do Contexto de Execucao ---
+
+function fakeExecutorConfig() {
+  const aplicados: Array<string | null> = [];
+  const obj = {
+    async aplicarDestilado(destiladoPath: string | null): Promise<void> {
+      aplicados.push(destiladoPath);
+    },
+    async remover(): Promise<void> {},
+  };
+  return { obj, aplicados };
+}
+
+async function criarDestilado(conteudo: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), `pack-test-${process.pid}-${contadorTmp++}`);
+  await fs.ensureDir(dir);
+  const caminho = path.join(dir, 'contexto-execucao.md');
+  await fs.writeFile(caminho, conteudo, 'utf-8');
+  return caminho;
+}
+
+test('forma prompt concatena o destilado ao posicional da task (CT-030, CT-031)', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('CONTEUDO-DESTILADO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: caminho,
+  });
+
+  await runner.run(tasks);
+
+  assert.equal(adapter.entradas[0].contextoExecucaoConteudo, 'CONTEUDO-DESTILADO');
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, caminho);
+});
+
+test('forma instructions nao toca no posicional e grava o arquivo de apoio (CT-030)', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('CONTEUDO-DESTILADO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const executor = fakeExecutorConfig();
+  const { runner } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'instructions' }),
+    packPathInicial: caminho,
+    executorConfig: executor.obj,
+  });
+
+  await runner.run(tasks);
+
+  assert.equal(adapter.entradas[0].contextoExecucaoConteudo, null);
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, caminho);
+  assert.deepEqual(executor.aplicados, [caminho]);
+});
+
+test('as duas formas entregam o mesmo conteudo de contexto (RF-011)', async () => {
+  const conteudo = 'MESMO-CONTEUDO';
+  const caminho = await criarDestilado(conteudo);
+
+  const adapterPrompt = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const alvoPrompt = montar({
+    adapter: adapterPrompt,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: caminho,
+  });
+  await alvoPrompt.runner.run(await criarTasks([{ numero: 1, done: false }]));
+
+  const adapterInstr = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const executor = fakeExecutorConfig();
+  const alvoInstr = montar({
+    adapter: adapterInstr,
+    opcoes: opcoes({ contextInjection: 'instructions' }),
+    packPathInicial: caminho,
+    executorConfig: executor.obj,
+  });
+  await alvoInstr.runner.run(await criarTasks([{ numero: 1, done: false }]));
+
+  assert.equal(adapterPrompt.entradas[0].contextoExecucaoConteudo, conteudo);
+  assert.equal(await fs.readFile(executor.aplicados[0] as string, 'utf-8'), conteudo);
+});
+
+test('o destilado e lido uma vez por construcao, nao uma vez por task (passo 11)', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+    { numero: 3, done: false },
+  ]);
+  const caminho = await criarDestilado('PRIMEIRA-VERSAO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: caminho,
+  });
+
+  // O arquivo muda no disco sem que a deriva o reconstrua: as tres tasks devem
+  // receber a mesma leitura, prova de que a leitura nao se repete por task.
+  await fs.writeFile(caminho, 'SEGUNDA-VERSAO', 'utf-8');
+  await runner.run(tasks);
+
+  const conteudos = adapter.entradas
+    .filter((e) => e.contextoExecucaoConteudo !== null)
+    .map((e) => e.contextoExecucaoConteudo);
+  assert.equal(adapter.chamadas.runTask, 3);
+  assert.deepEqual([...new Set(conteudos)], ['SEGUNDA-VERSAO']);
+});
+
+test('--no-context-pack anula o efeito de --context-injection (CT-030)', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const executor = fakeExecutorConfig();
+  const { runner } = montar({
+    adapter,
+    opcoes: opcoes({ contextPack: false, contextInjection: 'instructions' }),
+    packPathInicial: null,
+    executorConfig: executor.obj,
+  });
+
+  await runner.run(tasks);
+
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, null);
+  assert.equal(adapter.entradas[0].contextoExecucaoConteudo, null);
+  assert.deepEqual(executor.aplicados, [null]);
+});
+
+test('--context-injection e recusada com exatamente um aviso na ferramenta sem a capacidade (RF-009)', () => {
+  const { opcoes: ajustado, avisos } = ajustarPorCapacidades(
+    opcoes({ contextInjection: 'instructions' }),
+    { ...CAPACIDADES_LIGADAS, formaDeInjecaoSelecionavel: false },
+    'ClaudeCode'
+  );
+
+  const nominais = avisos.filter((a) => a.startsWith('--context-injection ignorada'));
+  assert.deepEqual(nominais, [
+    '--context-injection ignorada: ClaudeCode nao oferece o recurso correspondente',
+  ]);
+  assert.equal(ajustado.contextInjection, 'prompt');
+});
+
+test('a ferramenta sem a capacidade nao recebe o destilado no posicional (RF-009)', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('CONTEUDO-DESTILADO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: false } });
+  const { runner } = montar({ adapter, packPathInicial: caminho });
+
+  await runner.run(tasks);
+
+  assert.equal(adapter.entradas[0].contextoExecucaoConteudo, null);
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, caminho);
+});
+
+test('falha de leitura do destilado degrada o lote com aviso, sem abortar', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner, layout } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: path.join(os.tmpdir(), 'inexistente-xyz', 'contexto-execucao.md'),
+  });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 1);
+  assert.equal(adapter.entradas[0].contextoExecucaoConteudo, null);
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, null);
+  assert.ok(
+    layout.mensagens.some(
+      ([tipo, texto]) =>
+        tipo === 'aviso' && texto === 'nao foi possivel ler o Contexto de Execucao - seguindo sem ele'
+    )
+  );
+});
+
+test('falha de gravacao do arquivo de apoio degrada o lote com aviso, sem abortar', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('CONTEUDO-DESTILADO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner, layout } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'instructions' }),
+    packPathInicial: caminho,
+    executorConfig: {
+      async aplicarDestilado(): Promise<void> {
+        throw new Error('disco cheio');
+      },
+      async remover(): Promise<void> {},
+    },
+  });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(adapter.entradas[0].contextoExecucaoPath, null);
+  assert.ok(
+    layout.mensagens.some(
+      ([tipo, texto]) =>
+        tipo === 'aviso' &&
+        texto === 'nao foi possivel injetar o Contexto de Execucao - seguindo sem ele'
+    )
+  );
+});
+
+test('--dry-run exibe a contagem de bytes do destilado, nunca o conteudo (CT-030)', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('CONTEUDO-DESTILADO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner, layout } = montar({
+    adapter,
+    opcoes: opcoes({ dryRun: true, contextInjection: 'prompt' }),
+    packPathInicial: caminho,
+  });
+
+  await runner.run(tasks);
+
+  const linha = layout.mensagens.find(([, texto]) => texto.startsWith('dry-run: '));
+  assert.ok(linha);
+  assert.ok(linha[1].includes(`${tasks[0].caminho} + <contexto-execucao: 18 bytes>`));
+  assert.ok(!linha[1].includes('CONTEUDO-DESTILADO'));
+});
+
+test('nova construcao do destilado provoca nova leitura (passo 11)', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const caminho = await criarDestilado('PRIMEIRA-VERSAO');
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: caminho,
+  });
+
+  await runner.run([tasks[0]]);
+  await fs.writeFile(caminho, 'SEGUNDA-VERSAO', 'utf-8');
+  runner.setPackPath(caminho);
+  await runner.run([tasks[1]]);
+
+  const conteudos = adapter.entradas
+    .filter((e) => e.contextoExecucaoConteudo !== null)
+    .map((e) => e.contextoExecucaoConteudo);
+  assert.deepEqual(conteudos, ['PRIMEIRA-VERSAO', 'SEGUNDA-VERSAO']);
+});
+
+test('teto de custo ultrapassado encerra antes de iniciar a proxima task', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    async runTask() {
+      return resultado({ costUsd: 2.1, inputTokens: 100 });
+    },
+  });
+  const { runner, logger, layout } = montar({
+    adapter,
+    opcoes: opcoes({ maxBudgetUsd: 2 }),
+  });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'orcamento_de_custo');
+  assert.equal(adapter.chamadas.runTask, 1);
+  const evento = eventos(logger, 'budget_exhausted')[0];
+  assert.equal(evento.tipo, 'custo');
+  assert.equal(evento.custo_acumulado_usd, 2.1);
+  assert.equal(evento.max_budget_usd, 2);
+  assert.equal(evento.proxima_task, 'task-2.md');
+  assert.ok(
+    layout.mensagens.some(
+      ([kind, texto]) => kind === 'aviso' && texto === 'teto de custo ultrapassado antes de task-2'
+    )
+  );
+});
+
+test('lote que nao atinge o teto de custo executa tudo e nao emite o aviso', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    async runTask() {
+      return resultado({ costUsd: 0.5, inputTokens: 100 });
+    },
+  });
+  const { runner, logger, layout } = montar({
+    adapter,
+    opcoes: opcoes({ maxBudgetUsd: 2 }),
+  });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 2);
+  assert.equal(eventos(logger, 'budget_exhausted').length, 0);
+  assert.equal(
+    layout.mensagens.some(([, texto]) => texto.startsWith('teto de custo ultrapassado')),
+    false
+  );
+});
+
+test('sem --max-budget-usd a trava de custo nunca dispara, mesmo com custo acumulado', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    async runTask() {
+      return resultado({ costUsd: 9.9, inputTokens: 100 });
+    },
+  });
+  const { runner, logger } = montar({ adapter, opcoes: opcoes({ maxBudgetUsd: 0 }) });
+
+  assert.equal(await runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 2);
+  assert.equal(eventos(logger, 'budget_exhausted').length, 0);
+});
+
+test('ferramenta sem relatoDeCustoEmUSD nao dispara a trava de custo', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    capacidades: { relatoDeCustoEmUSD: false },
+    async runTask() {
+      return resultado({ costUsd: 5, inputTokens: 100 });
+    },
+  });
+  const { runner, logger } = montar({ adapter, opcoes: opcoes({ maxBudgetUsd: 2 }) });
+
+  assert.equal(await runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 2);
+  assert.equal(eventos(logger, 'budget_exhausted').length, 0);
+});
+
+test('o aviso de custo nao reportado sai uma unica vez no encerramento', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    async runTask() {
+      return resultado({ costUsd: 0, inputTokens: 1000 });
+    },
+  });
+  const { runner, layout } = montar({ adapter, opcoes: opcoes({ maxBudgetUsd: 2 }) });
+
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+  await runner.encerrar(motivo);
+
+  const avisos = layout.mensagens.filter(
+    ([kind, texto]) =>
+      kind === 'aviso' &&
+      texto === 'o provedor configurado nao reportou custo - o teto de custo nao teve efeito neste lote'
+  );
+  assert.equal(avisos.length, 1);
+});
+
+test('sem consumo de tokens o aviso de custo nao reportado nao sai', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: true }]);
+  const { runner, layout } = montar({ opcoes: opcoes({ maxBudgetUsd: 2 }) });
+
+  await runner.encerrar(await runner.run(tasks));
+
+  assert.equal(
+    layout.mensagens.some(([, texto]) => texto.startsWith('o provedor configurado nao reportou custo')),
+    false
+  );
+});
+
+test('ferramenta que nao reporta negacoes de permissao nao emite o aviso', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter({
+    capacidades: { relatoDeNegacoesDePermissao: false },
+    async runTask() {
+      return resultado({ permissionDenials: 3 });
+    },
+  });
+  const { runner, layout } = montar({ adapter });
+
+  await runner.run(tasks);
+
+  assert.equal(
+    layout.mensagens.some(([, texto]) => texto.includes('permissao(oes) negada(s)')),
+    false
+  );
+});
+
+test('ferramenta que reporta negacoes de permissao mantem o aviso', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter({
+    async runTask() {
+      return resultado({ permissionDenials: 3 });
+    },
+  });
+  const { runner, layout } = montar({ adapter });
+
+  await runner.run(tasks);
+
+  assert.ok(
+    layout.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' &&
+        texto === '3 permissao(oes) negada(s) - a task pode ter escrito codigo sem valida-lo'
+    )
+  );
+});
+
+test('o repasse de --max-budget-usd a CLI segue a capacidade tetoDeCustoNativo', () => {
+  const opcs = opcoes({ maxBudgetUsd: 2, model: 'anthropic/claude-sonnet-4-5' });
+  const entrada = {
+    taskPath: '/projeto/specs/features/exemplo/task-1.md',
+    opcoes: opcs,
+    extraDirs: [],
+    contextoExecucaoPath: null,
+    contextoExecucaoConteudo: null,
+  };
+
+  const argsClaude = getAdapter('claudecode').buildTaskArgs(entrada as never);
+  assert.equal(getCapabilities('claudecode').tetoDeCustoNativo, true);
+  assert.equal(argsClaude.includes('--max-budget-usd'), true);
+  assert.equal(argsClaude[argsClaude.indexOf('--max-budget-usd') + 1], '2');
+
+  const argsOpenCode = getAdapter('opencode').buildTaskArgs(entrada as never);
+  assert.equal(getCapabilities('opencode').tetoDeCustoNativo, false);
+  assert.equal(argsOpenCode.includes('--max-budget-usd'), false);
+});
+
+/** Capacidades da coluna OpenCode da tabela de CT-038. */
+const CAPACIDADES_OPENCODE: ToolCapabilities = {
+  execucaoNaoInterativa: true,
+  modoSemPromptDePermissao: true,
+  saidaEstruturadaComTokens: true,
+  identificadorDeSessao: true,
+  injecaoDeContextoNoSystemPrompt: true,
+  liberacaoDeDiretoriosDeLeitura: false,
+  consultaAosMcps: true,
+  relatoDeCustoEmUSD: true,
+  tetoDeCustoNativo: false,
+  modeloDeFallback: false,
+  otimizacaoDeCacheDePrompt: false,
+  relatoDeNegacoesDePermissao: false,
+  formaDeInjecaoSelecionavel: true,
+};
+
+const OPCOES_OPENCODE = {
+  tool: 'opencode' as const,
+  model: 'zai/glm-4.6',
+  packModel: 'zai/glm-4.6',
+  contextInjection: 'instructions' as const,
+};
+
+function resultadoOpenCode(over: Partial<TaskResult> = {}): TaskResult {
+  return resultado({
+    sessionId: 'ses_fa1d4c6a3ffeQm9B2oAqGRSbGF',
+    model: 'zai/glm-4.6',
+    modelosReportados: 'zai/glm-4.6',
+    inputTokens: 13176,
+    outputTokens: 8,
+    cacheReadInputTokens: 1280,
+    reasoningTokens: 69,
+    permissionDenials: null,
+    ...over,
+  });
+}
+
+test('execucao com OpenCode nao deixa a palavra da outra ferramenta na saida nem no registro', async () => {
+  const acumulado: string[] = [];
+
+  const tasks = await criarTasks([{ numero: 1, done: false }, { numero: 2, done: false }]);
+  const adapter = fakeAdapter({
+    capacidades: CAPACIDADES_OPENCODE,
+    runTask: async () =>
+      adapter.chamadas.runTask === 1
+        ? resultadoOpenCode({ contabilidadeParcial: true })
+        : resultadoOpenCode({ isError: true, subtype: 'error', exitCode: 1, sessionId: '' }),
+  });
+  const executado = montar({
+    adapter,
+    ferramenta: 'opencode',
+    opcoes: opcoes({ ...OPCOES_OPENCODE }),
+  });
+
+  await executado.runner.run(tasks);
+
+  const secas = await criarTasks([{ numero: 1, done: false }]);
+  const seco = montar({
+    adapter: fakeAdapter({ capacidades: CAPACIDADES_OPENCODE }),
+    ferramenta: 'opencode',
+    opcoes: opcoes({ ...OPCOES_OPENCODE, dryRun: true }),
+  });
+
+  await seco.runner.run(secas);
+
+  for (const alvo of [executado, seco]) {
+    for (const [kind, texto] of alvo.layout.mensagens) {
+      acumulado.push(kind, texto);
+    }
+    acumulado.push(...(alvo.layout.resumo ?? []));
+    acumulado.push(...alvo.logger.stderr);
+    for (const evento of alvo.logger.eventos) {
+      acumulado.push(JSON.stringify(evento));
+    }
+  }
+
+  const tudo = acumulado.join('\n');
+
+  assert.ok(tudo.length > 0, 'o lote precisa ter produzido saida para o teste ter valor');
+  assert.ok(/dry-run: opencode run/.test(tudo), 'o dry-run precisa exibir o executavel do OpenCode');
+  assert.ok(/terminou com erro/.test(tudo), 'o lote precisa ter exercitado o caminho de erro');
+  assert.equal(/claude/i.test(tudo), false, `a palavra da outra ferramenta vazou: ${tudo}`);
+});
+
+test('reconstrucao por deriva no meio do lote entrega o destilado NOVO as tasks seguintes', async () => {
+  const dir = path.join(os.tmpdir(), `task-runner-deriva-${process.pid}-${Date.now()}`);
+  await fs.ensureDir(dir);
+  const antigo = path.join(dir, 'antigo.md');
+  const novo = path.join(dir, 'novo.md');
+  await fs.writeFile(antigo, 'DESTILADO-ANTIGO');
+  await fs.writeFile(novo, 'DESTILADO-NOVO');
+
+  // Deriva apenas antes da segunda task: e o caso em que a atribuicao direta de
+  // `packPath` atualizava o arquivo e deixava o conteudo velho no prompt.
+  let vez = 0;
+  const contextPack = fakeContextPack({
+    async precisaReconstruir() {
+      vez += 1;
+      return { reconstruir: vez === 2, motivo: 'fonte_mais_recente', fonteAlterada: 'prd.md' };
+    },
+    caminhoParaInjecao() {
+      return novo;
+    },
+  });
+
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner } = montar({
+    adapter,
+    contextPack,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: antigo,
+  });
+
+  await runner.run(await criarTasks([{ numero: 1, done: false }, { numero: 2, done: false }]));
+
+  const conteudos = adapter.entradas.map((e) => e.contextoExecucaoConteudo);
+  assert.equal(conteudos[0], 'DESTILADO-ANTIGO');
+  assert.equal(conteudos[conteudos.length - 1], 'DESTILADO-NOVO');
+  assert.equal(adapter.entradas[adapter.entradas.length - 1].contextoExecucaoPath, novo);
+
+  await fs.remove(dir);
+});
+
+test('destilado que so passou a existir na reconstrucao chega a task e conta como contexto usado', async () => {
+  const dir = path.join(os.tmpdir(), `task-runner-deriva2-${process.pid}-${Date.now()}`);
+  await fs.ensureDir(dir);
+  const novo = path.join(dir, 'novo.md');
+  await fs.writeFile(novo, 'DESTILADO-NOVO');
+
+  // Primeira construcao falhou (`caminhoParaInjecao` -> null); a segunda deu certo.
+  let vez = 0;
+  const contextPack = fakeContextPack({
+    async precisaReconstruir() {
+      vez += 1;
+      return { reconstruir: vez === 2, motivo: 'fonte_mais_recente', fonteAlterada: 'prd.md' };
+    },
+    caminhoParaInjecao() {
+      return novo;
+    },
+  });
+
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner, logger } = montar({
+    adapter,
+    contextPack,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: null,
+  });
+
+  await runner.run(await criarTasks([{ numero: 1, done: false }, { numero: 2, done: false }]));
+
+  const starts = logger.eventos.filter((e) => e.event === 'start');
+  assert.equal(starts[0].usou_contexto_execucao, false);
+  assert.equal(starts[1].usou_contexto_execucao, true);
+  assert.equal(adapter.entradas[adapter.entradas.length - 1].contextoExecucaoConteudo, 'DESTILADO-NOVO');
+
+  await fs.remove(dir);
+});
+
+test('caminho conhecido mas ilegivel nao e contado como contexto usado na forma prompt', async () => {
+  const adapter = fakeAdapter({ capacidades: { formaDeInjecaoSelecionavel: true } });
+  const { runner, logger } = montar({
+    adapter,
+    opcoes: opcoes({ contextInjection: 'prompt' }),
+    packPathInicial: path.join(os.tmpdir(), `inexistente-${process.pid}-${Date.now()}.md`),
+  });
+
+  await runner.run(await criarTasks([{ numero: 1, done: false }]));
+
+  const start = logger.eventos.find((e) => e.event === 'start');
+  assert.equal(start?.usou_contexto_execucao, false);
 });

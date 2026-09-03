@@ -143,14 +143,23 @@ export class ToolResolver {
     for (const tool of mapeamento) {
       const slug = NOME_MAPEAMENTO_PARA_SLUG[tool.name];
 
-      if (!slug || !tool.commands) {
+      if (!slug) {
         continue;
       }
 
-      const diretorioComandos = path.join(cwd, tool.commands);
+      // O diretorio legado conta como deteccao da mesma ferramenta (CT-037):
+      // projetos inicializados por versoes anteriores do produto trazem
+      // `.opencode/commands/` no lugar de `.opencode/command/`. Os dois presentes
+      // contam UMA vez, nunca duas.
+      const candidatos = [tool.commands, tool.legacyCommands].filter(
+        (relativo): relativo is string => typeof relativo === 'string' && relativo !== ''
+      );
 
-      if (await fs.pathExists(diretorioComandos)) {
-        encontradas.push(slug);
+      for (const relativo of candidatos) {
+        if (await fs.pathExists(path.join(cwd, relativo))) {
+          encontradas.push(slug);
+          break;
+        }
       }
     }
 

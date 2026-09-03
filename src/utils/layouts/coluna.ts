@@ -28,6 +28,11 @@ interface StreamCompativel {
   write(texto: string): unknown;
 }
 
+/** Contador nao reportado pela ferramenta sai como `n/d` (RF-004, RF-010). */
+export function naoReportadoOuNumero(valor: number | null): string {
+  return valor === null ? 'n/d' : String(valor);
+}
+
 /** Identificador da task sem a extensao `.md`. */
 export function idDaTask(arquivo: string): string {
   return arquivo.replace(/\.md$/i, '');
@@ -44,7 +49,9 @@ export function camposInicio(info: TaskStartInfo): string {
 
 /**
  * Numeros de consumo, comuns aos quatro layouts: tokens da task, custo da task,
- * turnos, duracao de parede e permissoes negadas.
+ * turnos, duracao de parede, tokens de raciocinio e permissoes negadas. Campo
+ * que a ferramenta nao reporta sai como `n/d`, nunca como `0`: sao afirmacoes
+ * diferentes (RF-004, RF-010).
  */
 export function camposConsumo(info: TaskEndInfo): string {
   return [
@@ -52,7 +59,8 @@ export function camposConsumo(info: TaskEndInfo): string {
     `custo=$${info.custoDaTaskUsd.toFixed(4)}`,
     `turnos=${info.numTurns}`,
     `dur=${info.wallSeconds}s`,
-    `neg=${info.permissionDenials}`,
+    `rac=${naoReportadoOuNumero(info.reasoningTokens)}`,
+    `neg=${naoReportadoOuNumero(info.permissionDenials)}`,
   ].join(' ');
 }
 

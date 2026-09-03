@@ -1,6 +1,7 @@
 import path from 'node:path';
 import process from 'node:process';
 import fs from 'fs-extra';
+import semver from 'semver';
 import type {
   DeclaredCapability,
   PreflightContexto,
@@ -15,8 +16,30 @@ import type { ProcessRunner } from './process-runner.js';
 import type { FileService } from './file-service.js';
 import type { TaskDiscoveryService } from './task-discovery.js';
 import { getExecutavel, getToolDisplayName } from './tool-adapters/tool-registry.js';
+import { parseJsonc } from './jsonc.js';
 
 const COMANDO_EXECUTAR_TASK = 'executar-task.md';
+
+/**
+ * Piso de versao da CLI por ferramenta (CT-034). Versao abaixo do piso e AVISO, nunca
+ * ERRO: o lote pode funcionar, so nao ha garantia. Versao irreconhecivel por `semver`
+ * nao gera aviso algum, porque um formato inesperado nao e evidencia de defasagem.
+ */
+const PISO_DE_VERSAO: Partial<Record<ToolSlug, string>> = {
+  opencode: '1.18.0',
+};
+
+/**
+ * Ferramentas cujo proprio carregador de configuracao aceita comentarios e virgula
+ * final. Para elas o preflight usa a leitura tolerante de CT-036: classificar como
+ * ERRO um arquivo que a ferramenta le sem reclamar abortaria o lote sem motivo.
+ */
+const CONFIG_TOLERANTE_A_JSONC: ReadonlySet<ToolSlug> = new Set<ToolSlug>(['opencode']);
+
+/**
+ * Diretorio, relativo ao home, onde vive o arquivo de apoio de execucao de CT-035.
+ */
+const DIR_APOIO_OPENCODE = ['.specifica-br', 'opencode'];
 
 /**
  * Arquivos de configuracao que cada ferramenta le em silencio: um JSON invalido
@@ -29,7 +52,7 @@ const CONFIGS_POR_SLUG: Record<ToolSlug, string[]> = {
   cursor: ['.cursor/mcp.json'],
   'gemini-cli': ['.gemini/settings.json'],
   kiro: ['.kiro/settings/mcp.json'],
-  opencode: ['opencode.json'],
+  opencode: ['opencode.json', 'opencode.jsonc'],
 };
 
 /** Cabecalho da secao 9 do arquivo de task. */
@@ -114,7 +137,7 @@ export class PreflightService {
   private async grupoA(contexto: PreflightContexto): Promise<void> {
     const { ferramenta } = contexto;
     const executavel = getExecutavel(ferramenta);
-    const mensagemAusente = `CLI de ${ferramenta} nao encontrada no PATH. Abortado antes de gastar tokens.`;
+    const mensagemAusente = `CLI de ${this.nomeNaMensagem(ferramenta)} nao encontrada no PATH. Abortado antes de gastar tokens.`;
 
     const caminho = await this.runner.which(executavel);
     if (!caminho) {
@@ -126,6 +149,13 @@ export class PreflightService {
     const versao = await this.adapter.getVersion();
     if (!versao) {
       this.add('A', 'cli-versao', 'ERRO', mensagemAusente);
+    } else if (abaixoDoPiso(ferramenta, versao)) {
+      this.add(
+        'A',
+        'cli-versao',
+        'AVISO',
+        `${this.nomeNaMensagem(ferramenta)} ${versao} abaixo da versao minima suportada ${PISO_DE_VERSAO[ferramenta]} - o lote pode falhar`
+      );
     } else {
       this.add('A', 'cli-versao', 'OK', `${executavel} ${versao}${caminho ? ` em ${caminho}` : ''}`);
     }
@@ -168,16 +198,12 @@ export class PreflightService {
       'B',
       'comando-executar-task',
       'ERRO',
-      `comando executar-task nao instalado para ${contexto.ferramenta}. Rode: specifica-br init`
+      `comando executar-task nao instalado para ${this.nomeNaMensagem(contexto.ferramenta)}. Rode: specifica-br init`
     );
   }
 
   private async grupoC(contexto: PreflightContexto): Promise<void> {
-    const modo = contexto.opcoes.permissionMode
-      ? contexto.opcoes.permissionMode
-      : contexto.opcoes.autoApprove
-      ? 'bypassPermissions'
-      : '';
+    const modo = this.adapter.modoDePermissaoEfetivo(contexto.opcoes);
 
     if (!modo) {
       this.add(
@@ -196,9 +222,12 @@ export class PreflightService {
         continue;
       }
 
+      const tolerante = CONFIG_TOLERANTE_A_JSONC.has(contexto.ferramenta);
+
       let parsed: unknown;
       try {
-        parsed = JSON.parse(await fs.readFile(arquivo, 'utf-8'));
+        const conteudo = await fs.readFile(arquivo, 'utf-8');
+        parsed = tolerante ? parseJsonc(conteudo) : JSON.parse(conteudo);
       } catch {
         this.add('C', `config:${relativo}`, 'ERRO', `${arquivo} invalido - a ferramenta o ignora em silencio`);
         continue;
@@ -207,6 +236,85 @@ export class PreflightService {
       this.add('C', `config:${relativo}`, 'OK', `configuracao valida: ${arquivo}`);
       await this.verificarGanchos(parsed, contexto.projetoDir, relativo);
     }
+
+    if (contexto.ferramenta === 'opencode') {
+      await this.itensDoOpenCode(contexto);
+    }
+  }
+
+  /**
+   * Itens do grupo C exclusivos do OpenCode (RF-007, RF-017).
+   *
+   * Nao existe item de `deny` bloqueante: com o agente de permissao total, uma negacao
+   * no `opencode.json` do usuario nao impede mais nada. O que resta e o relato de
+   * transparencia sobre um bypass deliberado, sempre informativo.
+   */
+  private async itensDoOpenCode(contexto: PreflightContexto): Promise<void> {
+    const apoio = await this.localizarArquivoDeApoio(contexto.home);
+    if (!apoio) {
+      this.add('C', 'arquivo-apoio', 'ERRO', 'arquivo de apoio de execucao do specifica-br ausente ou ilegivel');
+    } else {
+      this.add('C', 'arquivo-apoio', 'OK', `arquivo de apoio de execucao legivel: ${apoio}`);
+    }
+
+    if (process.env.OPENCODE_CONFIG) {
+      this.add(
+        'C',
+        'opencode-config-preexistente',
+        'AVISO',
+        'configuracao de ambiente do OpenCode definida pelo usuario sera sobrescrita durante o lote'
+      );
+    }
+
+    this.add(
+      'C',
+      'permissao-sobreposta',
+      'INFO',
+      'as regras de permissao do seu projeto serao sobrepostas durante o lote'
+    );
+  }
+
+  /**
+   * Localiza o arquivo de apoio de execucao deste processo (CT-035).
+   *
+   * O nome carrega o `RUN_ID` e o PID, e o `RUN_ID` nao chega ao preflight. O PID,
+   * porem, e unico para este processo: o arquivo terminado em `-<pid>.json` dentro de
+   * `~/.specifica-br/opencode/` so pode ser o desta execucao.
+   *
+   * @returns O caminho do arquivo legivel, ou `null` quando ausente ou ilegivel
+   */
+  private async localizarArquivoDeApoio(home: string): Promise<string | null> {
+    const dir = path.join(home, ...DIR_APOIO_OPENCODE);
+    const sufixo = `-${process.pid}.json`;
+
+    let entradas: string[];
+    try {
+      entradas = await fs.readdir(dir);
+    } catch {
+      return null;
+    }
+
+    for (const entrada of entradas) {
+      if (!entrada.startsWith('executor-') || !entrada.endsWith(sufixo)) {
+        continue;
+      }
+      const arquivo = path.join(dir, entrada);
+      if (await this.acessivel(arquivo, fs.constants.R_OK)) {
+        return arquivo;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Nome da ferramenta como ela aparece nas mensagens ao usuario.
+   *
+   * O ClaudeCode mantem o slug: suas mensagens de preflight estao congeladas em teste
+   * desde a task-1, e a introducao de uma segunda ferramenta nao pode altera-las.
+   */
+  private nomeNaMensagem(slug: ToolSlug): string {
+    return slug === 'claudecode' ? slug : getToolDisplayName(slug);
   }
 
   /** Verifica que os arquivos referenciados por ganchos da configuracao existem. */
@@ -499,6 +607,20 @@ export class PreflightService {
       return false;
     }
   }
+}
+
+/**
+ * Verdadeiro quando a versao capturada e reconhecivel por `semver` e esta abaixo do
+ * piso declarado para a ferramenta (CT-034). Fonte unica do predicado, consumida pelo
+ * preflight e pelo campo `cli_version_abaixo_do_piso` do evento `run_start`.
+ */
+export function abaixoDoPiso(slug: ToolSlug, versao: string): boolean {
+  const piso = PISO_DE_VERSAO[slug];
+  if (!piso) {
+    return false;
+  }
+  const limpa = semver.valid(versao.trim());
+  return limpa !== null && semver.lt(limpa, piso);
 }
 
 function mensagemDe(erro: unknown): string {

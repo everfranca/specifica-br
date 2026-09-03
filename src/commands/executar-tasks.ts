@@ -17,18 +17,24 @@ import { FileService } from '../utils/file-service.js';
 import { ProcessRunner } from '../utils/process-runner.js';
 import { ProjectIdentityService } from '../utils/project-identity.js';
 import { ToolResolver } from '../utils/tool-resolver.js';
-import { getAdapter, getExecutavel } from '../utils/tool-adapters/tool-registry.js';
+import { getExecutavel, getToolDisplayName } from '../utils/tool-adapters/tool-registry.js';
 import type { ToolAdapter } from '../types/tool-adapter.js';
 import { TaskDiscoveryService } from '../utils/task-discovery.js';
 import { AccountingService } from '../utils/accounting.js';
 import { RunLoggerService, buildRunId } from '../utils/run-logger.js';
-import { PreflightService } from '../utils/preflight-service.js';
+import { PreflightService, abaixoDoPiso } from '../utils/preflight-service.js';
 import { ContextPackService } from '../utils/context-pack-service.js';
 import type { ContextPackContexto } from '../utils/context-pack-service.js';
 import { resolveHome, shortenPath } from '../utils/path-resolver.js';
 import { validateOptions } from '../utils/executar-tasks-validation.js';
 import { TaskRunner, ajustarPorCapacidades } from '../utils/task-runner.js';
-import type { ExecutarTasksOptions, PreflightContexto } from '../types/executar-tasks.js';
+import type { RunnerExecutorConfig } from '../utils/task-runner.js';
+import { montarAdapter, prepararArquivoDeApoio } from '../utils/executar-tasks-wiring.js';
+import type { AdapterMontado } from '../utils/executar-tasks-wiring.js';
+import type {
+  ExecutarTasksOptions,
+  PreflightContexto,
+} from '../types/executar-tasks.js';
 import type { ToolSlug } from '../types/config.js';
 
 /** Erro esperado que aborta a execucao com codigo 1 e mensagem nominal. */
@@ -59,15 +65,19 @@ function descricaoPermissoes(opcoes: ExecutarTasksOptions): string {
  */
 function descricaoContextoExec(
   opcoes: ExecutarTasksOptions,
-  tetoTexto: string
+  tetoTexto: string,
+  formaSelecionavel: boolean
 ): string {
   if (!opcoes.contextPack) {
     return 'off';
   }
+  // A forma so e anunciada onde ha escolha: na ferramenta sem a capacidade ela
+  // foi recusada em `ajustarPorCapacidades` e anuncia-la seria mentira (CT-030).
+  const injecao = formaSelecionavel ? `   injecao: ${opcoes.contextInjection}` : '';
   if (opcoes.dryRun) {
-    return 'on   (--dry-run: nao sera construido nem injetado)';
+    return `on   (--dry-run: nao sera construido nem injetado)${injecao}`;
   }
-  return `on   construcao: ${opcoes.packModel}/${opcoes.packEffort}   teto: ${tetoTexto}`;
+  return `on   construcao: ${opcoes.packModel}/${opcoes.packEffort}   teto: ${tetoTexto}${injecao}`;
 }
 
 async function executar(
@@ -135,6 +145,19 @@ async function executar(
   const emitirInfo = (texto: string): void => {
     process.stdout.write(`${status('info', texto, painter)}\n`);
   };
+  // O layout nasce aqui, antes da resolucao da ferramenta: o adapter e
+  // construido no passo 6 ja com o canal de avisos ligado a ele (RF-007, RF-009),
+  // e um canal criado depois nunca receberia o aviso emitido durante a montagem.
+  const glyphLevel = detectGlyphLevel();
+  const isTTY = Boolean(process.stdout.isTTY);
+  const layout = createLayout(layoutName, {
+    painter,
+    glyphLevel,
+    isTTY,
+    largura: process.stdout.columns || 80,
+    stream: process.stdout,
+  });
+
   const fileService = new FileService();
   const toolResolver = new ToolResolver(
     configService,
@@ -161,15 +184,22 @@ async function executar(
 
   // 6. Contrato de capacidades (RF-012).
   let adapter: ToolAdapter;
+  let servicoOpenCode: AdapterMontado['servico'];
   try {
-    adapter = getAdapter(ferramenta);
+    // Uma unica instancia do servico do arquivo de apoio, compartilhada entre o
+    // comando e o adapter: e dela que sai o `OPENCODE_CONFIG` de ENV-002.
+    ({ adapter, servico: servicoOpenCode } = montarAdapter({
+      ferramenta,
+      home,
+      onAviso: (mensagem) => layout.message('aviso', mensagem),
+    }));
   } catch (erro) {
     throw new AbortoExecucao((erro as Error).message);
   }
   const { opcoes, avisos: avisosCapacidade } = ajustarPorCapacidades(
     { ...validadas, tool: ferramenta } as ExecutarTasksOptions,
     adapter.capacidades,
-    ferramenta
+    getToolDisplayName(ferramenta)
   );
   const capacidadesAusentes = Object.entries(adapter.capacidades)
     .filter(([, ligada]) => !ligada)
@@ -203,19 +233,27 @@ async function executar(
     throw new AbortoExecucao((erro as Error).message);
   }
 
-  const glyphLevel = detectGlyphLevel();
-  const isTTY = Boolean(process.stdout.isTTY);
-  const layout = createLayout(layoutName, {
-    painter,
-    glyphLevel,
-    isTTY,
-    largura: process.stdout.columns || 80,
-    stream: process.stdout,
-  });
-
   const accounting = new AccountingService();
   const versao = await adapter.getVersion();
   const extraDirs = await adapter.resolveExtraDirs(opcoes, home, process.cwd());
+
+  // Arquivo de apoio de execucao do OpenCode (CT-035). Recolhe os restos de
+  // lotes mortos e grava o arquivo deste lote ANTES do preflight, que e quem
+  // verifica a presenca e a legibilidade dele. Nas demais ferramentas nada
+  // disso existe, e o `null` propaga isso ate o encerramento do runner.
+  let executorConfig: RunnerExecutorConfig | null;
+  try {
+    const preparado = await prepararArquivoDeApoio(servicoOpenCode, {
+      runId,
+      pid: process.pid,
+      opcoes: { contextInjection: opcoes.contextInjection, allow: opcoes.allow },
+    });
+    executorConfig = preparado.executorConfig;
+    avisosCapacidade.push(...preparado.avisosDoAllow);
+  } catch (erro) {
+    throw new AbortoExecucao((erro as Error).message);
+  }
+
   const jsonlPathCurto = shortenPath(path.join(logsDir, `run_${runId}.jsonl`));
   const tetoTexto =
     opcoes.packMaxTokens > 0
@@ -252,6 +290,10 @@ async function executar(
     dry_run: opcoes.dryRun,
     layout: layoutName,
     capacidades_ausentes: capacidadesAusentes,
+    context_injection: adapter.capacidades.formaDeInjecaoSelecionavel
+      ? opcoes.contextInjection
+      : 'n/a',
+    cli_version_abaixo_do_piso: abaixoDoPiso(ferramenta, versao),
   });
 
   layout.header([
@@ -267,7 +309,11 @@ async function executar(
       extraDirs.length ? extraDirs.map(shortenPath).join(' ') : 'nenhum'
     }`,
     `  Cache tuning   ${opcoes.cacheTuning ? 'on' : 'off'}`,
-    `  Contexto Exec  ${descricaoContextoExec(opcoes, tetoTexto)}`,
+    `  Contexto Exec  ${descricaoContextoExec(
+      opcoes,
+      tetoTexto,
+      adapter.capacidades.formaDeInjecaoSelecionavel
+    )}`,
     `  Orcamentos     task=$${opcoes.maxBudgetUsd}   janela=${janelaTexto}`,
     `  Tasks          ${selecionadas.length} de ${todas.length} selecionadas (${
       opcoes.tasks.trim() || 'todas'
@@ -311,6 +357,7 @@ async function executar(
     windowBudgetTokens: opcoes.windowBudgetTokens,
     packPathInicial: null,
     totalTasks: selecionadas.length,
+    executorConfig,
   });
 
   // SIGINT/SIGTERM (RF-024): mata a task corrente, restaura o cursor, grava e
@@ -358,13 +405,7 @@ async function executar(
         ferramenta,
         tasksSelecionadas: selecionadas.map((task) => task.caminho),
         logsDir,
-        opcoes: {
-          autoApprove: opcoes.autoApprove,
-          permissionMode: opcoes.permissionMode,
-          requireCmd: opcoes.requireCmd,
-          mcpCheck: opcoes.mcpCheck,
-          mcpTimeout: opcoes.mcpTimeout,
-        },
+        opcoes,
       };
 
       const preflight = await preflightService.run(contextoPreflight);
@@ -381,7 +422,7 @@ async function executar(
           continue;
         }
         layout.message(
-          item.severidade === 'ERRO' ? 'erro' : 'aviso',
+          item.severidade === 'ERRO' ? 'erro' : item.severidade === 'INFO' ? 'info' : 'aviso',
           `[${item.grupo}] ${item.item}: ${item.mensagem}`
         );
       }
@@ -555,6 +596,11 @@ export const executarTasksCommand = new Command('executar-tasks')
   .option('--sleep <segundos>', 'Pausa entre tasks em segundos', '0')
   .option('--no-cache-tuning', 'Desliga a otimizacao de cache do prompt')
   .option('--no-context-pack', 'Nao constroi nem injeta o Contexto de Execucao')
+  .option(
+    '--context-injection <forma>',
+    'Forma de injecao do Contexto de Execucao (prompt|instructions)',
+    'prompt'
+  )
   .option('--pack-model <modelo>', 'Modelo da construcao do Contexto de Execucao', 'sonnet')
   .option('--pack-effort <nivel>', 'Esforco da construcao do Contexto de Execucao', 'low')
   .option('--pack-max-tokens <n>', 'Teto de tamanho do Contexto de Execucao', '8000')

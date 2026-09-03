@@ -1,7 +1,10 @@
 import type { ToolSlug } from '../../types/config.js';
 import { TOOL_SLUGS } from '../../types/config.js';
 import type { ToolAdapter, ToolCapabilities } from '../../types/tool-adapter.js';
+import type { OpenCodeExecutorConfigService } from '../opencode-executor-config.js';
+import type { ProcessRunner } from '../process-runner.js';
 import { ClaudeCodeAdapter } from './claude-code-adapter.js';
+import { OpenCodeAdapter } from './opencode-adapter.js';
 
 interface RegistroFerramenta {
   slug: ToolSlug;
@@ -11,7 +14,7 @@ interface RegistroFerramenta {
   capacidades: ToolCapabilities;
 }
 
-const TODAS_LIGADAS: ToolCapabilities = {
+const CAPACIDADES_CLAUDECODE: ToolCapabilities = {
   execucaoNaoInterativa: true,
   modoSemPromptDePermissao: true,
   saidaEstruturadaComTokens: true,
@@ -19,6 +22,28 @@ const TODAS_LIGADAS: ToolCapabilities = {
   injecaoDeContextoNoSystemPrompt: true,
   liberacaoDeDiretoriosDeLeitura: true,
   consultaAosMcps: true,
+  relatoDeCustoEmUSD: true,
+  tetoDeCustoNativo: true,
+  modeloDeFallback: true,
+  otimizacaoDeCacheDePrompt: true,
+  relatoDeNegacoesDePermissao: true,
+  formaDeInjecaoSelecionavel: false,
+};
+
+const CAPACIDADES_OPENCODE: ToolCapabilities = {
+  execucaoNaoInterativa: true,
+  modoSemPromptDePermissao: true,
+  saidaEstruturadaComTokens: true,
+  identificadorDeSessao: true,
+  injecaoDeContextoNoSystemPrompt: true,
+  liberacaoDeDiretoriosDeLeitura: false,
+  consultaAosMcps: true,
+  relatoDeCustoEmUSD: true,
+  tetoDeCustoNativo: false,
+  modeloDeFallback: false,
+  otimizacaoDeCacheDePrompt: false,
+  relatoDeNegacoesDePermissao: false,
+  formaDeInjecaoSelecionavel: true,
 };
 
 const NENHUMA: ToolCapabilities = {
@@ -29,13 +54,19 @@ const NENHUMA: ToolCapabilities = {
   injecaoDeContextoNoSystemPrompt: false,
   liberacaoDeDiretoriosDeLeitura: false,
   consultaAosMcps: false,
+  relatoDeCustoEmUSD: false,
+  tetoDeCustoNativo: false,
+  modeloDeFallback: false,
+  otimizacaoDeCacheDePrompt: false,
+  relatoDeNegacoesDePermissao: false,
+  formaDeInjecaoSelecionavel: false,
 };
 
 /**
- * Registro das cinco ferramentas suportadas. Apenas `claudecode` tem contrato de
- * execucao validado nesta versao; as outras quatro sao reconhecidas pelo mecanismo
+ * Registro das cinco ferramentas suportadas. `claudecode` e `opencode` tem contrato
+ * de execucao validado nesta versao; as outras tres sao reconhecidas pelo mecanismo
  * e recusadas com mensagem nominal ate que seus contratos sejam preenchidos em
- * entregas posteriores (RF-012, out-of-scope declarado do PRD).
+ * entregas posteriores (RF-001, RF-019).
  */
 const REGISTRO: Record<ToolSlug, RegistroFerramenta> = {
   claudecode: {
@@ -43,7 +74,7 @@ const REGISTRO: Record<ToolSlug, RegistroFerramenta> = {
     nomeExibicao: 'ClaudeCode',
     executavel: 'claude',
     contratoValidado: true,
-    capacidades: TODAS_LIGADAS,
+    capacidades: CAPACIDADES_CLAUDECODE,
   },
   cursor: {
     slug: 'cursor',
@@ -70,12 +101,15 @@ const REGISTRO: Record<ToolSlug, RegistroFerramenta> = {
     slug: 'opencode',
     nomeExibicao: 'OpenCode',
     executavel: 'opencode',
-    contratoValidado: false,
-    capacidades: NENHUMA,
+    contratoValidado: true,
+    capacidades: CAPACIDADES_OPENCODE,
   },
 };
 
+const NOMES_DISPONIVEIS = 'ClaudeCode, OpenCode';
+
 let adapterClaudeCode: ClaudeCodeAdapter | undefined;
+let adapterOpenCode: OpenCodeAdapter | undefined;
 
 /**
  * Normaliza um valor de ferramenta sem distincao de caixa (RF-021, Nota de Decisao 3
@@ -103,7 +137,7 @@ export function getExecutavel(slug: ToolSlug): string {
 }
 
 /**
- * As sete capacidades declaradas da ferramenta (RF-012).
+ * As treze capacidades declaradas da ferramenta (CT-038).
  */
 export function getCapabilities(slug: ToolSlug): ToolCapabilities {
   return { ...REGISTRO[slug].capacidades };
@@ -117,19 +151,58 @@ export function isContratoValidado(slug: ToolSlug): boolean {
 }
 
 /**
+ * Dependencias que o comando injeta no adapter no momento da construcao. Todas
+ * opcionais: a construcao sem nenhuma delas continua valendo, e e a usada pelos
+ * pontos que so precisam do contrato (preflight, resolucao de capacidades).
+ */
+export interface AdapterDeps {
+  /** Criador de processos filhos, sempre com `shell: false`. */
+  runner?: ProcessRunner;
+  /**
+   * Instancia **unica** do ciclo de vida do arquivo de apoio de CT-035. Precisa
+   * ser a mesma que o comando usa para gravar: `buildEnv` le o caminho dela, e
+   * duas instancias fariam `OPENCODE_CONFIG` nunca ser exportada (ENV-002).
+   */
+  configService?: OpenCodeExecutorConfigService;
+  /** Canal dos avisos nominais de RF-007 e RF-009, sem prefixo. */
+  onAviso?: (mensagem: string) => void;
+}
+
+/**
  * Devolve o adapter da ferramenta. Ferramenta sem contrato validado e recusada com
- * a mensagem nominal de RF-012, antes do inicio do lote.
+ * a mensagem nominal de RF-019, antes do inicio do lote e sem consumir tokens.
+ *
+ * Chamada **com** dependencias constroi um adapter novo; so a chamada sem elas
+ * reaproveita o memo do modulo. Memorizar a construcao com dependencia faria o
+ * servico de um lote vazar para todos os seguintes do mesmo processo.
  *
  * @throws {Error} `contrato de execucao de <ferramenta> ainda nao validado nesta
- *   versao. Disponivel: ClaudeCode`
+ *   versao. Disponiveis: ClaudeCode, OpenCode`
  */
-export function getAdapter(slug: ToolSlug): ToolAdapter {
+export function getAdapter(slug: ToolSlug, deps: AdapterDeps = {}): ToolAdapter {
   const registro = REGISTRO[slug];
 
   if (!registro.contratoValidado) {
     throw new Error(
-      `contrato de execucao de ${registro.nomeExibicao} ainda nao validado nesta versao. Disponivel: ClaudeCode`
+      `contrato de execucao de ${registro.nomeExibicao} ainda nao validado nesta versao. Disponiveis: ${NOMES_DISPONIVEIS}`
     );
+  }
+
+  const temDeps =
+    deps.runner !== undefined || deps.configService !== undefined || deps.onAviso !== undefined;
+
+  if (slug === 'opencode') {
+    if (temDeps) {
+      return new OpenCodeAdapter(deps.runner, deps.configService, deps.onAviso);
+    }
+    if (!adapterOpenCode) {
+      adapterOpenCode = new OpenCodeAdapter();
+    }
+    return adapterOpenCode;
+  }
+
+  if (deps.runner !== undefined) {
+    return new ClaudeCodeAdapter(deps.runner);
   }
 
   if (!adapterClaudeCode) {

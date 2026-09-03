@@ -15,6 +15,7 @@ const OPCOES_ESPERADAS = [
   '--model',
   '--no-cache-tuning',
   '--no-context-pack',
+  '--context-injection',
   '--no-mcp-check',
   '--no-skill-dirs',
   '--pack-effort',
@@ -31,9 +32,9 @@ const OPCOES_ESPERADAS = [
   '--window-budget-tokens',
 ].sort();
 
-test('as 24 opcoes de RF-002 estao declaradas, nem mais nem menos', () => {
+test('as 25 opcoes de RF-002 e CT-030 estao declaradas, nem mais nem menos', () => {
   const longs = executarTasksCommand.options.map((o) => o.long).sort();
-  assert.equal(executarTasksCommand.options.length, 24);
+  assert.equal(executarTasksCommand.options.length, 25);
   assert.deepEqual(longs, OPCOES_ESPERADAS);
 });
 
@@ -128,4 +129,35 @@ test('os defaults da tabela da secao 4.1 sao aplicados', () => {
   assert.equal(v.sleep, 0);
   assert.deepEqual(v.allow, []);
   assert.deepEqual(v.requireCmd, []);
+});
+
+test('--context-injection aceita os dois valores do conjunto fechado (CT-030)', () => {
+  assert.equal(validateOptions({ contextInjection: 'prompt' }).contextInjection, 'prompt');
+  assert.equal(
+    validateOptions({ contextInjection: 'instructions' }).contextInjection,
+    'instructions'
+  );
+});
+
+test('--context-injection tem default prompt (CT-030)', () => {
+  assert.equal(validateOptions({}).contextInjection, 'prompt');
+});
+
+test('--context-injection aparece no --help com o valor padrao (RF-015)', () => {
+  const opcao = executarTasksCommand.options.find((o) => o.long === '--context-injection');
+  assert.ok(opcao);
+  assert.equal(opcao.flags, '--context-injection <forma>');
+  assert.equal(opcao.description, 'Forma de injecao do Contexto de Execucao (prompt|instructions)');
+  assert.equal(opcao.defaultValue, 'prompt');
+});
+
+test('--context-injection fora do conjunto fechado e rejeitado com a mensagem nominal (RF-016)', () => {
+  assert.throws(
+    () => validateOptions({ contextInjection: 'xyz' }),
+    /^Error: --context-injection invalido: xyz\. Use um de: prompt\|instructions$/
+  );
+});
+
+test('--context-injection vazia cai no default em vez de falhar', () => {
+  assert.equal(validateOptions({ contextInjection: '' }).contextInjection, 'prompt');
 });

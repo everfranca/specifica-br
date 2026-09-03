@@ -16,6 +16,7 @@ import type {
   TaskStartInfo,
   TaskEndInfo,
 } from '../dist/utils/layouts/index.js';
+import { camposConsumo } from '../dist/utils/layouts/coluna.js';
 import { createPainter, LEVEL, GLYPH, visibleWidth } from '../dist/utils/terminal/index.js';
 import type { GlyphLevel } from '../dist/utils/terminal/index.js';
 import type { LayoutName } from '../dist/types/config.js';
@@ -82,6 +83,7 @@ const END: TaskEndInfo = {
   wallSeconds: 514,
   tokensDaTask: 1034600,
   custoDaTaskUsd: 1.2346,
+  reasoningTokens: null,
   permissionDenials: 0,
   semCertificacao: false,
 };
@@ -151,6 +153,7 @@ test('os quatro layouts emitem os mesmos dados de estado e de consumo', () => {
     'custo=$1.2346',
     'turnos=34',
     'dur=514s',
+    'rac=n/d',
     'neg=0',
   ];
   for (const nome of NOMES) {
@@ -418,4 +421,38 @@ test('o layout lote atualiza o tempo decorrido da task ativa', async () => {
   const depois = stream.writes.length;
   await new Promise((r) => setTimeout(r, 250));
   assert.equal(stream.writes.length, depois);
+});
+
+test('camposConsumo exibe raciocinio e negacoes reportados como numero', () => {
+  const linha = camposConsumo({ ...END, reasoningTokens: 69, permissionDenials: 3 });
+  assert.ok(linha.includes('rac=69'), linha);
+  assert.ok(linha.includes('neg=3'), linha);
+});
+
+test('camposConsumo exibe n/d, e nunca 0, para raciocinio e negacoes nao reportados', () => {
+  const linha = camposConsumo({ ...END, reasoningTokens: null, permissionDenials: null });
+  assert.ok(linha.includes('rac=n/d'), linha);
+  assert.ok(linha.includes('neg=n/d'), linha);
+  assert.ok(!linha.includes('rac=0'), linha);
+  assert.ok(!linha.includes('neg=0'), linha);
+});
+
+test('camposConsumo distingue zero reportado de nao reportado', () => {
+  const zero = camposConsumo({ ...END, reasoningTokens: 0, permissionDenials: 0 });
+  assert.ok(zero.includes('rac=0'), zero);
+  assert.ok(zero.includes('neg=0'), zero);
+});
+
+test('os quatro layouts exibem n/d quando os contadores nao sao reportados', () => {
+  const NOMES: LayoutName[] = ['coluna', 'moldura', 'regua', 'lote'];
+  for (const nome of NOMES) {
+    const { contexto, stream } = fazerCtx({ isTTY: false, largura: 100 });
+    const layout =
+      nome === 'lote' ? new LoteLayout(contexto) : createLayout(nome, contexto);
+    layout.taskStart(START);
+    layout.taskEnd({ ...END, reasoningTokens: null, permissionDenials: null });
+    const saida = semAnsi(stream.writes.join(''));
+    assert.ok(saida.includes('rac=n/d'), `${nome} sem rac=n/d`);
+    assert.ok(saida.includes('neg=n/d'), `${nome} sem neg=n/d`);
+  }
 });

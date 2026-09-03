@@ -151,12 +151,13 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `--auto-approve` | `false` | Concede acesso total, sem prompts de permissão. |
 | `--permission-mode <modo>` | `''` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `bypassPermissions`. |
 | `--no-skill-dirs` | dirs ligados | Não adiciona os diretórios de skills como `--add-dir`. |
-| `--max-budget-usd <n>` | `0` | Teto de custo por task em USD (`0` desliga). |
+| `--max-budget-usd <n>` | `0` | Teto de custo em USD (`0` desliga). Além do teto nativo por task, quando a ferramenta o oferece, o próprio comando verifica o custo acumulado entre as tasks, para qualquer ferramenta que reporte custo, e encerra o lote antes de iniciar a task que ultrapassaria o teto. |
 | `--window-budget-tokens <n>` | `0` | Teto de tokens da janela de execução (`0` desliga). |
 | `--stop-on-failure` | `false` | Interrompe o lote na primeira task com erro. |
 | `--sleep <segundos>` | `0` | Pausa entre tasks. |
 | `--no-cache-tuning` | ligado | Desliga a otimização de cache do prompt. |
 | `--no-context-pack` | ligado | Não constrói nem injeta o Contexto de Execução. |
+| `--context-injection <forma>` | `prompt` | Forma de injeção do Contexto de Execução: `prompt` concatena o destilado ao prompt da task; `instructions` declara o caminho do destilado na definição do agente de execução. Só tem efeito no OpenCode. |
 | `--pack-model <modelo>` | `sonnet` | Modelo da construção do Contexto de Execução. |
 | `--pack-effort <nível>` | `low` | Esforço da construção do Contexto de Execução. |
 | `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
@@ -184,7 +185,41 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 
 **Dependências externas obrigatórias:** a CLI da ferramenta de IA no PATH e o comando `/executar-task` instalado para ela (`specifica-br init`). **Nenhum utilitário de shell** — interpretador de comandos, processador de JSON, calculadora ou formatador de colunas — é exigido, em nenhum sistema operacional.
 
-**Limitação de ferramentas desta versão:** apenas **ClaudeCode** tem contrato de execução validado. `cursor`, `gemini-cli`, `kiro` e `opencode` são reconhecidas e **recusadas com mensagem explícita** até que seus contratos sejam preenchidos em versões futuras.
+**Ferramentas com contrato de execução validado:** **ClaudeCode** e **OpenCode**. `cursor`, `gemini-cli` e `kiro` são reconhecidas e **recusadas com mensagem explícita** até que seus contratos sejam preenchidos em versões futuras.
+
+**Como a ferramenta é resolvida**, nesta ordem: (1) `--tool`; (2) ferramenta registrada para o projeto; (3) detecção automática pelos diretórios do projeto; (4) escolha interativa. A ferramenta resolvida é gravada no registro do projeto. Para o OpenCode, a detecção reconhece tanto o diretório atual de comandos `.opencode/command/` quanto o diretório legado `.opencode/commands/`, criado por versões anteriores do `init`: um projeto no layout legado é detectado sem exigir migração, renomeação ou uso de `--tool`, e conta uma única vez ainda que os dois diretórios existam.
+
+**Toda a saída nomeia a ferramenta efetivamente resolvida** — cabeçalho, avisos, erros, resumo e registros —, incluindo a versão da CLI dessa ferramenta. Nenhum texto fixo referente a uma ferramenta aparece quando outra está em uso.
+
+**Capacidades por ferramenta:**
+
+| Capacidade | ClaudeCode | OpenCode |
+|:---|:---:|:---:|
+| Execução não interativa | sim | sim |
+| Modo sem prompt de permissão | sim | sim |
+| Saída estruturada com contagem de tokens | sim | sim |
+| Identificador de sessão | sim | sim |
+| Injeção de contexto no system prompt | sim | sim |
+| Liberação de diretórios de leitura | sim | não |
+| Consulta aos MCPs | sim | sim |
+| Relato de custo em USD | sim | sim |
+| Teto de custo nativo | sim | não |
+| Modelo de fallback | sim | não |
+| Otimização de cache do prompt | sim | não |
+| Relato de permissões negadas | sim | não |
+| Forma de injeção selecionável | não | sim |
+
+**Opções que dependem de capacidade ausente são recusadas com aviso nominal, e o lote prossegue** — nunca são ignoradas em silêncio e nunca causam aborto. Com OpenCode, `--no-skill-dirs`, `--fallback-model` e `--no-cache-tuning` produzem um aviso cada e as funcionalidades correspondentes ficam desativadas para a execução; nenhuma configuração de cache específica de outra ferramenta é repassada ao OpenCode. `--permission-mode` com modo sem equivalente também é recusado com aviso. Do outro lado, `--context-injection` informada para o ClaudeCode é recusada com aviso.
+
+**Permissão durante o lote com OpenCode:** o lote opera com **permissão total**, sobrepondo deliberadamente as regras de permissão configuradas no projeto, inclusive negações explícitas. Sem isso, um projeto que negue a edição de arquivos faria todas as tasks falharem em escrever código. A sobreposição é **relatada nas verificações prévias**, nunca aplicada em silêncio, e vale apenas enquanto o lote executa: **nenhum arquivo é escrito dentro do projeto**, porque a permissão é entregue por um arquivo de apoio mantido em `~/.specifica-br/opencode/` e removido ao final. Regras adicionais informadas por `--allow` são traduzidas para o OpenCode quando têm equivalente, sempre como liberação e nunca como negação; a forma sem equivalente, como as regras de MCP, é recusada com aviso. Sobre `--permission-mode`: `bypassPermissions` é o comportamento padrão do lote e `acceptEdits` é tratado como permissão total sem aviso, porque em lote não há quem responda a uma pergunta. Não informar modo algum nem `--auto-approve` continua sendo ERRO no preflight.
+
+**Teto de custo:** `--max-budget-usd` é verificado pelo próprio comando, antes de iniciar cada task, para **qualquer ferramenta que reporte custo**. Se o custo acumulado do lote já tiver ultrapassado o teto, a próxima task não é iniciada e o lote encerra com o motivo registrado como orçamento de custo. No ClaudeCode a trava nativa por task continua valendo, e essa verificação atua como rede de segurança adicional. Se a ferramenta reportar custo zero durante todo o lote, o resumo avisa uma única vez que o teto não teve efeito.
+
+**Contexto de Execução no OpenCode:** a construção, o reaproveitamento, o teto de tamanho e `--no-context-pack` são os mesmos de qualquer ferramenta. Muda apenas a forma de entrega, escolhida por `--context-injection`: `prompt`, o padrão, concatena o destilado ao prompt da task e é funcionalmente garantida; `instructions` declara o caminho do destilado na definição do agente de execução e tende a preservar a economia de cache, reduzindo o custo por task. As duas entregam o mesmo conteúdo — a diferença observável está nos contadores de cache e no custo registrados, o que permite compará-las com a própria contabilidade da execução. A forma efetivamente usada aparece no cabeçalho. Com `--no-context-pack`, a opção não tem efeito e o cabeçalho exibe o Contexto de Execução como desligado.
+
+**Tokens de raciocínio e permissões negadas no resumo:** o resumo traz um campo de tokens de raciocínio, somado ao total de tokens da execução; para ferramentas que não relatam esse dado, como o ClaudeCode, o campo aparece como `nao reportado`, nunca como zero. A mesma regra vale para permissões negadas: com OpenCode o campo aparece como `n/d`, e o comando nunca afirma que houve zero negações nem estima o número a partir de mensagens de erro.
+
+**Contabilidade parcial:** se parte da saída estruturada de uma task for ilegível, a task é contabilizada com o que pôde ser lido e o comando avisa que a contabilidade pode estar subestimada, em vez de descartar a task ou zerar seus números.
 
 ### `specifica-br config`
 
@@ -599,7 +634,7 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
-- `executar-tasks`: `--tool`, `--model` (`sonnet`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--pack-model` (`sonnet`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
+- `executar-tasks`: `--tool`, `--model` (`sonnet`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--pack-model` (`sonnet`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
 - `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout; `config layout <nome>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento

@@ -12,7 +12,11 @@ const MAPPING = [
   { name: 'Cursor', commands: '.cursor/commands/' },
   { name: 'Gemini CLI', commands: '.gemini/commands/' },
   { name: 'Kiro', commands: '.kiro/commands/' },
-  { name: 'OpenCode', commands: '.opencode/command/' },
+  {
+    name: 'OpenCode',
+    commands: '.opencode/command/',
+    legacyCommands: '.opencode/commands/',
+  },
 ];
 
 function fakeConfig(registrada?: ToolSlug) {
@@ -243,6 +247,82 @@ test('a mensagem de deteccao unica sai pelo emissor injetado, nao pelo console',
     assert.ok(!emitidas[0].includes('[ INFO]'));
   } finally {
     console.log = consoleOriginal;
+    await fs.remove(dir);
+  }
+});
+
+test('projeto so com o diretorio atual do OpenCode e detectado', async () => {
+  const cfg = fakeConfig(undefined);
+  const fsvc = fakeFileService();
+  const dir = await cwdComComandos('.opencode/command');
+
+  try {
+    const resolvida = await novoResolver(cfg, fsvc, entradaFake(undefined), false).resolve(
+      'proj',
+      undefined,
+      dir
+    );
+    assert.equal(resolvida, 'opencode');
+    assert.deepEqual(cfg.setCalls, [['proj', 'opencode']]);
+  } finally {
+    await fs.remove(dir);
+  }
+});
+
+test('projeto no layout legado do OpenCode e detectado e gravado sem --tool', async () => {
+  const cfg = fakeConfig(undefined);
+  const fsvc = fakeFileService();
+  const dir = await cwdComComandos('.opencode/commands');
+
+  try {
+    const resolvida = await novoResolver(cfg, fsvc, entradaFake(undefined), false).resolve(
+      'proj',
+      undefined,
+      dir
+    );
+    assert.equal(resolvida, 'opencode');
+    assert.deepEqual(cfg.setCalls, [['proj', 'opencode']]);
+  } finally {
+    await fs.remove(dir);
+  }
+});
+
+test('os dois diretorios do OpenCode presentes contam uma unica deteccao', async () => {
+  const cfg = fakeConfig(undefined);
+  const fsvc = fakeFileService();
+  const dir = await cwdComComandos('.opencode/command', '.opencode/commands');
+  const infos: string[] = [];
+
+  try {
+    const resolver = new ToolResolver(
+      cfg as never,
+      fsvc as never,
+      entradaFake(undefined),
+      () => false,
+      (texto: string) => infos.push(texto)
+    );
+    const resolvida = await resolver.resolve('proj', undefined, dir);
+
+    assert.equal(resolvida, 'opencode');
+    assert.deepEqual(infos, ['ferramenta detectada: OpenCode']);
+    assert.deepEqual(cfg.setCalls, [['proj', 'opencode']]);
+  } finally {
+    await fs.remove(dir);
+  }
+});
+
+test('o diretorio legado do OpenCode nao encobre outra ferramenta detectada', async () => {
+  const cfg = fakeConfig(undefined);
+  const fsvc = fakeFileService();
+  const dir = await cwdComComandos('.opencode/commands', '.claude/commands');
+
+  try {
+    await assert.rejects(
+      novoResolver(cfg, fsvc, entradaFake(undefined), false).resolve('proj', undefined, dir),
+      /deteccao foi inconclusiva/
+    );
+    assert.deepEqual(cfg.setCalls, []);
+  } finally {
     await fs.remove(dir);
   }
 });

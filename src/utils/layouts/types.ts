@@ -34,7 +34,8 @@ export interface TaskEndInfo {
   wallSeconds: number;
   tokensDaTask: number;
   custoDaTaskUsd: number;
-  permissionDenials: number;
+  reasoningTokens: number | null;
+  permissionDenials: number | null;
   semCertificacao: boolean;
 }
 

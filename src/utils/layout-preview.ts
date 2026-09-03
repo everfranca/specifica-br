@@ -35,6 +35,7 @@ const EXEMPLO_FIM_OK = {
   wallSeconds: 47,
   tokensDaTask: 82000,
   custoDaTaskUsd: 0.1234,
+  reasoningTokens: null,
   permissionDenials: 0,
   semCertificacao: false,
 };
@@ -50,6 +51,7 @@ const EXEMPLO_FIM_ERRO = {
   wallSeconds: 9,
   tokensDaTask: 15000,
   custoDaTaskUsd: 0.021,
+  reasoningTokens: 1800,
   permissionDenials: 1,
   semCertificacao: false,
 };

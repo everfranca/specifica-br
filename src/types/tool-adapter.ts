@@ -9,6 +9,12 @@ export interface ToolCapabilities {
   injecaoDeContextoNoSystemPrompt: boolean;
   liberacaoDeDiretoriosDeLeitura: boolean;
   consultaAosMcps: boolean;
+  relatoDeCustoEmUSD: boolean;
+  tetoDeCustoNativo: boolean;
+  modeloDeFallback: boolean;
+  otimizacaoDeCacheDePrompt: boolean;
+  relatoDeNegacoesDePermissao: boolean;
+  formaDeInjecaoSelecionavel: boolean;
 }
 
 export interface TaskResult {
@@ -26,8 +32,10 @@ export interface TaskResult {
   outputTokens: number;
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
-  permissionDenials: number;
+  reasoningTokens: number | null;
+  permissionDenials: number | null;
   ferramentasNegadas: string | null;
+  contabilidadeParcial: boolean;
   rawStdout: string;
   rawStderr: string;
 }
@@ -66,7 +74,9 @@ export interface ToolAdapter {
   getVersion(): Promise<string>;
   listMcps(mcpsDeclarados: string[], timeoutSegundos: number): Promise<McpCheckResult[]>;
 
-  modoDePermissaoEfetivo(opcoes: ExecutarTasksOptions): string;
+  modoDePermissaoEfetivo(
+    opcoes: Pick<ExecutarTasksOptions, 'autoApprove' | 'permissionMode'>
+  ): string;
   resolveExtraDirs(opcoes: ExecutarTasksOptions, home: string, cwd: string): Promise<string[]>;
   mcpListRaw(timeoutSegundos: number): Promise<string | null>;
   interpretMcpStatus(saida: string | null, nomes: string[]): Map<string, 'OK' | 'AVISO'>;

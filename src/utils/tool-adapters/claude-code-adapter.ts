@@ -12,6 +12,7 @@ import type {
 } from '../../types/tool-adapter.js';
 import type { ToolSlug } from '../../types/config.js';
 import { ProcessRunner, processRunner } from '../process-runner.js';
+import { escaparRegExp, numeroOuZero } from './parse-helpers.js';
 import { detectRateLimit } from './rate-limit.js';
 import { getExecutavel } from './tool-registry.js';
 
@@ -25,6 +26,12 @@ const CAPACIDADES_CLAUDECODE: ToolCapabilities = {
   injecaoDeContextoNoSystemPrompt: true,
   liberacaoDeDiretoriosDeLeitura: true,
   consultaAosMcps: true,
+  relatoDeCustoEmUSD: true,
+  tetoDeCustoNativo: true,
+  modeloDeFallback: true,
+  otimizacaoDeCacheDePrompt: true,
+  relatoDeNegacoesDePermissao: true,
+  formaDeInjecaoSelecionavel: false,
 };
 
 interface RespostaClaudeCode {
@@ -39,19 +46,6 @@ interface RespostaClaudeCode {
   usage?: Record<string, unknown>;
   modelUsage?: Record<string, Record<string, unknown>>;
   permission_denials?: unknown;
-}
-
-/**
- * Escapa os metacaracteres de expressao regular de um texto vindo de fonte externa
- * (aqui, o nome de um MCP declarado no arquivo da task), para que um nome com `.`
- * ou `*` seja buscado literalmente e nao como padrao.
- */
-function escaparRegExp(texto: string): string {
-  return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function numeroOuZero(valor: unknown): number {
-  return typeof valor === 'number' && Number.isFinite(valor) ? valor : 0;
 }
 
 /**
@@ -71,7 +65,9 @@ export class ClaudeCodeAdapter implements ToolAdapter {
    * `bypassPermissions` quando `--auto-approve`; senao vazio, e nenhuma flag e passada
    * (o preflight da task-7 classifica isso como ERRO).
    */
-  public modoDePermissaoEfetivo(opcoes: ExecutarTasksOptions): string {
+  public modoDePermissaoEfetivo(
+    opcoes: Pick<ExecutarTasksOptions, 'autoApprove' | 'permissionMode'>
+  ): string {
     if (opcoes.permissionMode) {
       return opcoes.permissionMode;
     }
@@ -224,8 +220,10 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       outputTokens: 0,
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 0,
+      reasoningTokens: null,
       permissionDenials: 0,
       ferramentasNegadas: null,
+      contabilidadeParcial: false,
       rawStdout,
       rawStderr,
     };
@@ -310,8 +308,10 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       outputTokens,
       cacheCreationInputTokens,
       cacheReadInputTokens,
+      reasoningTokens: null,
       permissionDenials: denials.length,
       ferramentasNegadas: ferramentas.length > 0 ? ferramentas.join(',') : null,
+      contabilidadeParcial: false,
       rawStdout,
       rawStderr,
     };

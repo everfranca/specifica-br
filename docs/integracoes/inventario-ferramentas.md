@@ -3,11 +3,11 @@
 | Metadado | Valor |
 |:---|:---|
 | **Documento** | Inventário de referência (documento vivo) |
-| **Última atualização** | 01/09/2026 |
+| **Última atualização** | 02/09/2026 |
 | **Escopo** | Comando `specifica-br executar-tasks` |
-| **Estado** | 1 de 5 ferramentas com contrato validado |
+| **Estado** | 2 de 5 ferramentas com contrato validado |
 | **Fontes** | Código-fonte em `src/`, `specs/features/comando-executar-tasks-global/techspec.md` (CT-020 a CT-024) e documentação oficial atual das CLIs (via MCP `context7`) |
-| **Levantamentos concluídos** | OpenCode — coluna fechada em 01/09/2026 contra o código-fonte da CLI (`/anomalyco/opencode`). Detalhamento em `specs/prompts/0006-techspec-executar-tasks-opencode.md` |
+| **Levantamentos concluídos** | OpenCode — coluna fechada em 01/09/2026 contra o código-fonte da CLI (`/anomalyco/opencode`) e **contrato de execução validado em 02/09/2026** pela feature `executar-tasks-opencode`. Detalhamento em `specs/features/executar-tasks-opencode/techspec.md` |
 
 ---
 
@@ -22,15 +22,23 @@ Estado atual do registro (`src/utils/tool-adapters/tool-registry.ts:40-76`):
 
 | Slug | Nome | Executável | Contrato validado | Capacidades |
 |:---|:---|:---|:---|:---|
-| `claudecode` | ClaudeCode | `claude` | **Sim** | 7 de 7 ligadas |
-| `cursor` | Cursor | `cursor` | Não | 0 de 7 |
-| `gemini-cli` | Gemini CLI | `gemini` | Não | 0 de 7 |
-| `kiro` | Kiro | `kiro` | Não | 0 de 7 |
-| `opencode` | OpenCode | `opencode` | Não | 0 de 7 |
+| `claudecode` | ClaudeCode | `claude` | **Sim** | 12 de 13 ligadas |
+| `cursor` | Cursor | `cursor` | Não | 0 de 13 |
+| `gemini-cli` | Gemini CLI | `gemini` | Não | 0 de 13 |
+| `kiro` | Kiro | `kiro` | Não | 0 de 13 |
+| `opencode` | OpenCode | `opencode` | **Sim** | 8 de 13 ligadas |
 
-`getAdapter()` recusa as quatro não validadas com
-`contrato de execucao de <Nome> ainda nao validado nesta versao. Disponivel: ClaudeCode`
-(`tool-registry.ts:118-132`).
+`getAdapter()` recusa as três não validadas com
+`contrato de execucao de <Nome> ainda nao validado nesta versao. Disponiveis: ClaudeCode, OpenCode`
+(`tool-registry.ts`).
+
+A tabela de capacidades passou de 7 para 13 campos. As ligadas no OpenCode são: execução não
+interativa, modo sem prompt de permissão, saída estruturada com tokens, identificador de
+sessão, injeção de contexto no system prompt, consulta aos MCPs, relato de custo em USD e
+forma de injeção selecionável. As desligadas são: liberação de diretórios de leitura, teto de
+custo nativo, modelo de fallback, otimização de cache de prompt e relato de negações de
+permissão. `formaDeInjecaoSelecionavel` é a única ligada no OpenCode e desligada no
+ClaudeCode.
 
 **Como ler este documento:** a seção 2 define o contrato que qualquer ferramenta precisa
 cumprir; a seção 3 é o inventário completo da única integração existente (Claude Code);
@@ -330,7 +338,7 @@ A coluna **OpenCode** foi fechada em 01/09/2026 contra o código-fonte da CLI
 | Sem prompt de permissão | `--permission-mode bypassPermissions` | agente com `{"*":"allow"}` via `OPENCODE_CONFIG` + `--agent` (`--auto` **não** basta) | `--force` | `--approval-mode=yolo` (`--yolo` está deprecado) | `?` |
 | Modo de permissão granular | `acceptEdits\|auto\|dontAsk\|manual\|bypassPermissions` | `permission` em config, global ou por agente; última regra casada vence | `permissions.allow` / `permissions.deny` em config | `--approval-mode` | `?` |
 | Diretórios extras de leitura | `--add-dir <dir>` (repetível) | — (só `external_directory: allow`; `--dir` troca o cwd) | — | `--include-directories` (repetível ou por vírgula) | `?` |
-| Injeção de system prompt | `--append-system-prompt-file <arquivo>` | `agent.<id>.prompt = "{file:...}"` (acrescenta ou substitui: **a confirmar**) | — | — | `?` |
+| Injeção de system prompt | `--append-system-prompt-file <arquivo>` | `instructions: ["<caminho>"]` no arquivo de apoio entregue por `OPENCODE_CONFIG` (camada adicional do system prompt), ou concatenação ao posicional — escolhido por `--context-injection` | — | — | `?` |
 | Modelo de fallback | `--fallback-model <lista ordenada>` | — | — | — | — |
 | Restrição de ferramentas | `--allowedTools <regra>` (repetível) | `permission` por ferramenta, em config ou agente | `permissions.allow` em config | `--allowed-tools` (`?` verificar) | `?` |
 | Teto de custo nativo | `--max-budget-usd <n>` | — | — | — | — |
@@ -355,7 +363,7 @@ A coluna **OpenCode** foi fechada em 01/09/2026 contra o código-fonte da CLI
 | Necessidade | Claude Code | OpenCode | Cursor CLI | Gemini CLI | Kiro |
 |:---|:---|:---|:---|:---|:---|
 | Versão da CLI | `claude --version` | `opencode --version` (`-v`) | `?` | `?` | `?` |
-| Listagem de MCPs | `claude mcp list` | `opencode mcp list` (alias `mcp ls`) — **formato da linha a confirmar** | `?` | `?` | `?` |
+| Listagem de MCPs | `claude mcp list` | `opencode mcp list` (alias `mcp ls`) — saída decorada com ANSI; status pelo vocabulário literal `connected`/`failed`, nunca pelo glifo | `?` | `?` | `?` |
 | Detecção de limite de uso | regex sobre o texto bruto | mesma regex sobre o texto bruto (mensagem vem do provider) | `?` | `?` | `?` |
 
 ### 4.4 Leitura das tabelas acima
@@ -393,22 +401,22 @@ Quatro conclusões saltam do mapa:
 Estrutura uniforme para cada integração futura. As três primeiras linhas de cada ficha já
 estão definidas no código; o restante precisa ser levantado.
 
-### 5.1 OpenCode (`opencode`) — próximo alvo
+### 5.1 OpenCode (`opencode`) — contrato validado em 02/09/2026
 
 | Item | Valor |
 |:---|:---|
 | Executável | `opencode` (`tool-registry.ts`) |
-| Detecção | `.opencode/command/` (legado `.opencode/commands/` — **não é lido**, ver 6.5) |
+| Detecção | `.opencode/command/` e o legado `.opencode/commands/`, ambos lidos; a ferramenta detectada pelos dois conta uma única vez |
 | Comandos globais | `<config>/opencode/command/` (única ferramenta com base `config`, não `home`) |
 | Skills | `.agents/skills/` (projeto e global) |
-| Config validada no preflight | `opencode.json` |
+| Config validada no preflight | `opencode.json` e `opencode.jsonc`, por parser tolerante a comentários e vírgula final |
 | Execução headless | `opencode run --command <nome> <args>` — `--command` é obrigatório para invocar comando customizado; sem ele a mensagem vai como texto puro, **sem expansão de `/`** |
 | Modelo | `--model provider/modelo` (`-m`) |
 | Esforço | `--variant <high\|max\|minimal>` — flag dedicada, não sufixo de modelo |
 | Permissões | `permission` em `opencode.json`/`opencode.jsonc`, global ou por agente; resolução por *última regra que casa* |
 | Saída estruturada | `--format json` → NDJSON de eventos; tokens e custo em `step_finish` |
-| Auxiliares | `opencode --version`, `opencode mcp list` |
-| A levantar | **formato de linha de `opencode mcp list`**; se `agent.prompt` acrescenta ou substitui o system prompt base |
+| Auxiliares | `opencode --version` (piso `1.18.0`), `opencode mcp list` |
+| A levantar | Nada em aberto: o formato de `opencode mcp list` foi capturado byte a byte e a injeção do contexto é resolvida por `instructions`, com `--context-injection` selecionando a forma |
 
 **Prioridade confirmada:** `specs/prompts/0004-execucao-tasks-loop-com-opencode.md` é o pedido
 formal desta integração; `specs/prompts/0005-prd-executar-tasks-opencode.md` (o quê) e
@@ -418,16 +426,18 @@ atende. Contexto anterior:
 para outro momento"). O MVP 1 do produto nasceu focado em OpenCode
 (`docs/mvp-roadmap.md`).
 
-**Capacidades projetadas: 6 de 7.** Só `liberacaoDeDiretoriosDeLeitura` fica desligada — não
-há equivalente de `--add-dir`.
+**Capacidades efetivas: 8 de 13.** Ficam desligadas `liberacaoDeDiretoriosDeLeitura` (não há
+equivalente de `--add-dir`), `tetoDeCustoNativo` (emulado pelo orquestrador),
+`modeloDeFallback`, `otimizacaoDeCacheDePrompt` e `relatoDeNegacoesDePermissao` (dado não
+reportado, declarado como `n/d` e nunca como zero).
 
 **Checklist para `contratoValidado: true`:**
 - [x] Confirmar o formato de saída estruturada de `opencode run` e mapear os campos de `TaskResult` — NDJSON, agregação por `step_finish`
 - [x] Decidir como expressar permissões sem escrever arquivos no projeto do usuário — agente allow-all via `OPENCODE_CONFIG`
 - [x] Mapear `--effort` — é `--variant`, não sufixo de modelo
 - [x] Definir o comportamento quando não há `total_cost_usd` — há custo (`step_finish.part.cost`); a questão deixou de existir
-- [ ] Decidir o destino do Contexto de Execução (`agent.prompt` vs. concatenação no prompt) — depende de confirmar se `agent.prompt` acrescenta ou substitui
-- [ ] Levantar o formato de linha de `opencode mcp list` para a regex de status
+- [x] Decidir o destino do Contexto de Execução — as duas formas ficam disponíveis, escolhidas por `--context-injection` (`prompt` é o padrão; `instructions` declara o caminho no arquivo de apoio)
+- [x] Levantar o formato de linha de `opencode mcp list` para a regex de status — capturado byte a byte, com ANSI removido antes da leitura
 - [ ] Ler `legacyCommands` na detecção
 - [ ] Implementar `getVersion` e `listMcps`
 - [ ] Decidir o destino do quinto contador `tokens.reasoning`, que não existe em `TaskResult`
@@ -520,13 +530,18 @@ Dois pontos imprimem o nome literal independentemente da ferramenta resolvida:
 - `src/commands/executar-tasks.ts:262` — `Ferramenta ${ferramenta} (claude ${versao})`
 - `src/utils/task-runner.ts:313` — `dry-run: claude ${args.join(' ')}`
 
-Com OpenCode registrado, o cabeçalho exibiria `opencode (claude 2.1.0)`.
+**Resolvido em 02/09/2026.** Os dois pontos passaram a usar `getExecutavel(<slug>)`, fonte
+única do nome do executável, e há teste afirmando que a palavra da outra ferramenta não
+aparece na saída nem no registro de uma execução com OpenCode.
 
 ### 6.5 `legacyCommands` do OpenCode nunca é consultado
 
 `tools-mapping.json` traz `legacyCommands: ".opencode/commands/"` para o OpenCode, mas
-`ToolResolver.detectar` (`tool-resolver.ts:139-155`) só testa o campo `commands`. Projetos
-OpenCode criados antes da renomeação para `.opencode/command/` não são detectados.
+`ToolResolver.detectar` (`tool-resolver.ts:139-155`) só testava o campo `commands`. Projetos
+OpenCode criados antes da renomeação para `.opencode/command/` não eram detectados.
+
+**Resolvido em 02/09/2026.** `ToolResolver.detectar` passou a testar `commands` e, quando
+presente, `legacyCommands`; a ferramenta detectada pelos dois diretórios conta uma única vez.
 
 ### 6.6 Custo depende de a CLI reportá-lo
 

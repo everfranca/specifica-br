@@ -23,6 +23,7 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     sleep: 0,
     cacheTuning: true,
     contextPack: true,
+    contextInjection: 'prompt',
     packModel: 'sonnet',
     packEffort: 'low',
     packMaxTokens: 8000,

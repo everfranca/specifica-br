@@ -49,11 +49,33 @@ function resultadoDryRun(): TaskResult {
     outputTokens: 0,
     cacheCreationInputTokens: 0,
     cacheReadInputTokens: 0,
+    reasoningTokens: null,
     permissionDenials: 0,
     ferramentasNegadas: null,
+    contabilidadeParcial: false,
     rawStdout: '',
     rawStderr: '',
   };
+}
+
+/**
+ * Substitui, na linha de `--dry-run`, o posicional que carrega o destilado pela
+ * contagem de bytes dele (CT-030). Despejar o destilado inteiro na tela tornaria
+ * a linha ilegivel sem acrescentar informacao: o arquivo esta no disco.
+ */
+function resumirArgs(args: string[], conteudo: string | null): string[] {
+  if (conteudo === null || conteudo === '') {
+    return args;
+  }
+  const sufixo = `\n\n${conteudo}`;
+  return args.map((arg) =>
+    arg.endsWith(sufixo)
+      ? `${arg.slice(0, -sufixo.length)} + <contexto-execucao: ${Buffer.byteLength(
+          conteudo,
+          'utf-8'
+        )} bytes>`
+      : arg
+  );
 }
 
 /**
@@ -92,16 +114,49 @@ export function ajustarPorCapacidades(
     ajustado.contextPack = false;
   }
 
-  if (!capacidades.liberacaoDeDiretoriosDeLeitura && opcoes.skillDirs) {
+  if (!capacidades.liberacaoDeDiretoriosDeLeitura) {
     avisos.push(
       `diretorios extras de skills ignorados: ${nomeFerramenta} nao libera diretorios de leitura`
     );
+    if (!opcoes.skillDirs) {
+      avisos.push(`--no-skill-dirs ignorada: ${nomeFerramenta} nao oferece o recurso correspondente`);
+    }
     ajustado.skillDirs = false;
   }
 
   if (!capacidades.consultaAosMcps && opcoes.mcpCheck) {
     avisos.push(`verificacao de MCPs desligada: ${nomeFerramenta} nao consulta MCPs`);
     ajustado.mcpCheck = false;
+  }
+
+  if (!capacidades.relatoDeCustoEmUSD) {
+    ajustado.maxBudgetUsd = 0;
+  }
+
+  if (!capacidades.modeloDeFallback && opcoes.fallbackModel) {
+    avisos.push(`--fallback-model ignorada: ${nomeFerramenta} nao oferece o recurso correspondente`);
+    ajustado.fallbackModel = '';
+  }
+
+  // `--context-injection` so faz sentido onde ha mais de uma forma de entrega
+  // (CT-030). O default `prompt` nao conta como informada: sem `getOptionValueSource`
+  // aqui, e o unico criterio disponivel e ele nao muda o resultado observavel.
+  if (!capacidades.formaDeInjecaoSelecionavel) {
+    if (opcoes.contextInjection !== 'prompt') {
+      avisos.push(
+        `--context-injection ignorada: ${nomeFerramenta} nao oferece o recurso correspondente`
+      );
+    }
+    ajustado.contextInjection = 'prompt';
+  }
+
+  if (!capacidades.otimizacaoDeCacheDePrompt) {
+    if (!opcoes.cacheTuning) {
+      avisos.push(
+        `--no-cache-tuning ignorada: ${nomeFerramenta} nao oferece o recurso correspondente`
+      );
+    }
+    ajustado.cacheTuning = false;
   }
 
   return { opcoes: ajustado, avisos };
@@ -138,6 +193,20 @@ export interface RunnerLogger {
   close(): Promise<void>;
 }
 
+/**
+ * Parte do arquivo de apoio de execucao que o runner precisa conhecer (CT-035):
+ * a reescrita da chave `instructions` a cada construcao do destilado e a remocao
+ * no encerramento. A primeira escrita e do comando, antes do preflight.
+ */
+export interface RunnerExecutorConfig {
+  /**
+   * Regrava o arquivo de apoio com o destilado informado, de forma atomica.
+   * `null` remove a chave `instructions`.
+   */
+  aplicarDestilado(destiladoPath: string | null): Promise<void>;
+  remover(): Promise<void>;
+}
+
 export interface TaskRunnerDeps {
   adapter: RunnerToolAdapter;
   contextPack: RunnerContextPack;
@@ -154,6 +223,8 @@ export interface TaskRunnerDeps {
   windowBudgetTokens: number;
   packPathInicial: string | null;
   totalTasks: number;
+  /** Arquivo de apoio do OpenCode a remover no encerramento; `null` nas demais ferramentas. */
+  executorConfig: RunnerExecutorConfig | null;
 }
 
 interface Evidencia {
@@ -161,7 +232,7 @@ interface Evidencia {
   sessionId: string;
   tokens: number;
   turnos: number;
-  negacoes: number;
+  negacoes: number | null;
   usouContexto: boolean;
 }
 
@@ -183,6 +254,10 @@ export class TaskRunner {
   private readonly evidencias: Evidencia[] = [];
   private taskCorrente: TaskInfo | null = null;
   private packPath: string | null;
+  /** Conteudo do destilado na forma `prompt`; `null` nas demais formas. */
+  private packConteudo: string | null = null;
+  /** `false` enquanto a construcao corrente ainda nao foi entregue a ferramenta. */
+  private packEntregue = false;
   /** Cancelamento do filho da task corrente (RF-024, caso extremo 24). */
   private readonly cancelamento = new AbortController();
 
@@ -190,9 +265,80 @@ export class TaskRunner {
     this.packPath = deps.packPathInicial;
   }
 
-  /** Ajusta o caminho do destilado depois que o passo 11 decidiu reaproveitar ou construir. */
+  /**
+   * Ajusta o caminho do destilado depois que o passo 11 decidiu reaproveitar ou
+   * construir, e invalida a entrega anterior: a leitura do conteudo e a
+   * reescrita do arquivo de apoio acontecem uma vez por construcao, nunca uma
+   * vez por task.
+   */
   public setPackPath(caminho: string | null): void {
     this.packPath = caminho;
+    this.packConteudo = null;
+    this.packEntregue = false;
+  }
+
+  /**
+   * Entrega o destilado a ferramenta na forma escolhida (CT-030, passo 11 da
+   * secao 5.1). Roda no maximo uma vez por construcao:
+   *
+   * - ClaudeCode: o caminho basta, e ele ja viaja em `contextoExecucaoPath`;
+   * - OpenCode/`instructions`: o arquivo de apoio recebe o caminho absoluto;
+   * - OpenCode/`prompt`: o conteudo e lido uma vez e concatenado ao posicional.
+   *
+   * Falha de leitura ou de reescrita degrada para lote sem destilado, com
+   * `[ AVIS]`, e nunca aborta.
+   */
+  private async entregarDestilado(): Promise<void> {
+    if (this.packEntregue) {
+      return;
+    }
+    this.packEntregue = true;
+    this.packConteudo = null;
+
+    const { adapter, opcoes, executorConfig } = this.deps;
+
+    if (!adapter.capacidades.formaDeInjecaoSelecionavel) {
+      return;
+    }
+
+    const caminho = this.packPath;
+
+    switch (opcoes.contextInjection) {
+      case 'instructions': {
+        if (!executorConfig) {
+          return;
+        }
+        try {
+          await executorConfig.aplicarDestilado(caminho);
+        } catch {
+          this.packPath = null;
+          this.deps.layout.message(
+            'aviso',
+            'nao foi possivel injetar o Contexto de Execucao - seguindo sem ele'
+          );
+        }
+        return;
+      }
+      case 'prompt': {
+        if (caminho === null) {
+          return;
+        }
+        try {
+          this.packConteudo = await fs.readFile(caminho, 'utf-8');
+        } catch {
+          this.packPath = null;
+          this.deps.layout.message(
+            'aviso',
+            'nao foi possivel ler o Contexto de Execucao - seguindo sem ele'
+          );
+        }
+        return;
+      }
+      default: {
+        const _exaustivo: never = opcoes.contextInjection;
+        return _exaustivo;
+      }
+    }
   }
 
   /**
@@ -234,7 +380,10 @@ export class TaskRunner {
         );
         if (deriva.reconstruir) {
           const novo = await this.deps.contextPack.ensure(this.deps.packContexto);
-          this.packPath = this.deps.contextPack.caminhoParaInjecao(novo);
+          // `setPackPath` e o unico ponto que invalida a entrega anterior. A
+          // atribuicao direta atualizaria o arquivo em disco e deixaria todas as
+          // tasks seguintes recebendo o destilado antigo (CT-013).
+          this.setPackPath(this.deps.contextPack.caminhoParaInjecao(novo));
         }
       }
 
@@ -246,15 +395,44 @@ export class TaskRunner {
         await this.deps.logger.logEvent({
           event: 'budget_exhausted',
           ts: '',
+          tipo: 'janela',
           proxima_task: task.arquivo,
           tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
           window_budget_tokens: this.deps.windowBudgetTokens,
+          custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
+          max_budget_usd: this.deps.opcoes.maxBudgetUsd,
         });
         this.deps.layout.message(
           'aviso',
           `orcamento da janela esgotado antes de ${idDaTask(task.arquivo)}`
         );
         return 'orcamento_da_janela';
+      }
+
+      // c. Trava de custo ANTES de iniciar a task (RF-008, passo 12c). Vale para
+      // toda ferramenta que reporte custo, inclusive as que ja tem teto nativo:
+      // ali ela e rede de seguranca e so se manifesta quando o teto e de fato
+      // ultrapassado, deixando intacta a execucao que nao o atinge.
+      if (
+        this.deps.opcoes.maxBudgetUsd > 0 &&
+        this.deps.adapter.capacidades.relatoDeCustoEmUSD &&
+        this.deps.accounting.total.custoAcumuladoUsd >= this.deps.opcoes.maxBudgetUsd
+      ) {
+        await this.deps.logger.logEvent({
+          event: 'budget_exhausted',
+          ts: '',
+          tipo: 'custo',
+          proxima_task: task.arquivo,
+          tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
+          window_budget_tokens: this.deps.windowBudgetTokens,
+          custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
+          max_budget_usd: this.deps.opcoes.maxBudgetUsd,
+        });
+        this.deps.layout.message(
+          'aviso',
+          `teto de custo ultrapassado antes de ${idDaTask(task.arquivo)}`
+        );
+        return 'orcamento_de_custo';
       }
 
       const motivo = await this.executarTask(task, posicao, total);
@@ -275,8 +453,15 @@ export class TaskRunner {
     posicao: number,
     total: number
   ): Promise<RunEndMotivo | null> {
-    const { opcoes } = this.deps;
-    const usouCtx = this.packPath !== null;
+    const { adapter, opcoes } = this.deps;
+    await this.entregarDestilado();
+    // A evidencia acompanha o que de fato foi entregue: na forma `prompt` o que
+    // viaja e o conteudo, e um caminho conhecido cujo conteudo nao pode ser lido
+    // nao e contexto nenhum.
+    const usouCtx =
+      adapter.capacidades.formaDeInjecaoSelecionavel && opcoes.contextInjection === 'prompt'
+        ? this.packConteudo !== null
+        : this.packPath !== null;
     const antes = this.deps.accounting.total.tokensGastosAcumulado;
     const disponivelAntes =
       this.deps.windowBudgetTokens > 0 ? this.deps.windowBudgetTokens - antes : null;
@@ -308,7 +493,7 @@ export class TaskRunner {
       opcoes,
       extraDirs: this.deps.extraDirs,
       contextoExecucaoPath: this.packPath,
-      contextoExecucaoConteudo: null,
+      contextoExecucaoConteudo: this.packConteudo,
     };
 
     let resultado: TaskResult;
@@ -316,7 +501,10 @@ export class TaskRunner {
       const args = this.deps.adapter.buildTaskArgs(entrada);
       this.deps.layout.message(
         'info',
-        `dry-run: ${getExecutavel(this.deps.ferramenta)} ${args.join(' ')}`
+        `dry-run: ${getExecutavel(this.deps.ferramenta)} ${resumirArgs(
+          args,
+          this.packConteudo
+        ).join(' ')}`
       );
       resultado = resultadoDryRun();
     } else {
@@ -361,6 +549,7 @@ export class TaskRunner {
       wallSeconds,
       tokensDaTask,
       custoDaTaskUsd: custoDaTask,
+      reasoningTokens: resultado.reasoningTokens,
       permissionDenials: resultado.permissionDenials,
       semCertificacao,
     });
@@ -389,6 +578,8 @@ export class TaskRunner {
       output_tokens: resultado.outputTokens,
       cache_creation_input_tokens: resultado.cacheCreationInputTokens,
       cache_read_input_tokens: resultado.cacheReadInputTokens,
+      reasoning_tokens: resultado.reasoningTokens,
+      contabilidade_parcial: resultado.contabilidadeParcial,
       sem_certificacao: semCertificacao,
       tokens_gastos_task: tokensDaTask,
       tokens_gastos_acumulado_depois: depois,
@@ -422,7 +613,14 @@ export class TaskRunner {
       this.tasksComErro += 1;
     }
 
-    if (resultado.permissionDenials > 0) {
+    // Passo 12f: o aviso depende da CAPACIDADE, nao do valor. Ferramenta que nao
+    // reporta o dado nao pode produzir silencio indistinguivel de "nenhum
+    // problema" (RF-010).
+    if (
+      this.deps.adapter.capacidades.relatoDeNegacoesDePermissao &&
+      resultado.permissionDenials !== null &&
+      resultado.permissionDenials > 0
+    ) {
       this.deps.layout.message(
         'aviso',
         `${resultado.permissionDenials} permissao(oes) negada(s) - a task pode ter escrito codigo sem valida-lo`
@@ -508,6 +706,26 @@ export class TaskRunner {
       custo_total_usd: this.deps.accounting.formatCustoRegistro(total.custoAcumuladoUsd),
     });
 
+    // Remocao em melhor esforco do arquivo de apoio de execucao (CT-035): ela
+    // vem antes do resumo para que uma falha silenciosa nao atrase a saida.
+    if (this.deps.executorConfig) {
+      await this.deps.executorConfig.remover().catch(() => undefined);
+    }
+
+    // Provedor por assinatura reporta custo zero em todos os passos: sem este
+    // aviso o usuario que informou `--max-budget-usd` acreditaria estar protegido
+    // por uma trava que jamais poderia disparar. Nenhuma estimativa de preco e
+    // calculada. `encerrar` e idempotente, entao o aviso sai uma unica vez.
+    if (
+      this.deps.adapter.capacidades.relatoDeCustoEmUSD &&
+      this.deps.accounting.custoZeroNaoReportado
+    ) {
+      this.deps.layout.message(
+        'aviso',
+        'o provedor configurado nao reportou custo - o teto de custo nao teve efeito neste lote'
+      );
+    }
+
     this.deps.layout.dispose();
     this.deps.layout.summary(this.montarResumo(motivo));
     await this.deps.logger.close();
@@ -522,6 +740,11 @@ export class TaskRunner {
       `  Tasks executadas   ${this.tasksExecutadas}`,
       `  Tasks com erro     ${this.tasksComErro}`,
       `  Tokens totais      ${this.deps.accounting.formatMilhar(total.tokensGastosAcumulado)}`,
+      `  Raciocinio         ${
+        this.deps.accounting.raciocinioReportado
+          ? this.deps.accounting.formatMilhar(total.reasoningTokens)
+          : 'nao reportado'
+      }`,
       `  Custo acumulado    $${this.deps.accounting.formatCustoExibicao(total.custoAcumuladoUsd)}`,
     ];
 
@@ -539,7 +762,7 @@ export class TaskRunner {
     }
     for (const ev of this.evidencias) {
       linhas.push(
-        `    ${idDaTask(ev.task)}  sessao=${ev.sessionId}  tokens=${ev.tokens}  turnos=${ev.turnos}  neg=${ev.negacoes}  ctx=${ev.usouContexto ? 'sim' : 'nao'}`
+        `    ${idDaTask(ev.task)}  sessao=${ev.sessionId}  tokens=${ev.tokens}  turnos=${ev.turnos}  neg=${ev.negacoes === null ? 'n/d' : ev.negacoes}  ctx=${ev.usouContexto ? 'sim' : 'nao'}`
       );
     }
 

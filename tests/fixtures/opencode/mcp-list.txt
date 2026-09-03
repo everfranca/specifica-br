@@ -1,0 +1,13 @@
+[0m
+┌  MCP Servers
+│
+●  ✓ context7 [90mconnected
+│      [90mhttps://mcp.context7.com/mcp
+│
+●  ✓ playwright [90mconnected
+│      [90mnpx @playwright/mcp@latest
+│
+●  ✗ quebrado [90mfailed
+│      Executable not found in $PATH: "comando-que-nao-existe-xyz"
+│
+└  3 server(s)

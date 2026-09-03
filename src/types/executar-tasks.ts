@@ -5,6 +5,13 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type PermissionMode = 'acceptEdits' | 'auto' | 'dontAsk' | 'manual' | 'bypassPermissions';
 
 /**
+ * Forma de injecao do Contexto de Execucao na ferramenta (CT-030, RF-011).
+ * Uniao literal, e nunca `string`, para que um valor fora do conjunto seja erro
+ * de compilacao e todo `switch` sobre ela possa ser exaustivo por `never`.
+ */
+export type ContextInjection = 'prompt' | 'instructions';
+
+/**
  * Desfecho da avaliacao do Contexto de Execucao numa execucao (task-8, CT-013/CT-021).
  * `desligado` = `--no-context-pack`; `falhou` = construcao nao satisfez as tres
  * condicoes de sucesso de CT-021, mas o lote prossegue sem o destilado.
@@ -40,6 +47,7 @@ export interface ExecutarTasksOptions {
   sleep: number;
   cacheTuning: boolean;
   contextPack: boolean;
+  contextInjection: ContextInjection;
   packModel: string;
   packEffort: EffortLevel;
   packMaxTokens: number;
@@ -61,7 +69,7 @@ export interface TaskInfo {
   selecionada: boolean;
 }
 
-export type PreflightSeveridade = 'OK' | 'AVISO' | 'ERRO';
+export type PreflightSeveridade = 'OK' | 'INFO' | 'AVISO' | 'ERRO';
 
 export interface PreflightItem {
   grupo: string;
@@ -107,13 +115,10 @@ export interface PreflightContexto {
   ferramenta: ToolSlug;
   tasksSelecionadas: string[];
   logsDir: string;
-  opcoes: {
-    autoApprove: boolean;
-    permissionMode: PermissionMode | '';
-    requireCmd: string[];
-    mcpCheck: boolean;
-    mcpTimeout: number;
-  };
+  opcoes: Pick<
+    ExecutarTasksOptions,
+    'autoApprove' | 'permissionMode' | 'requireCmd' | 'mcpCheck' | 'mcpTimeout'
+  >;
 }
 
 export interface RunAccounting {
@@ -121,6 +126,7 @@ export interface RunAccounting {
   outputTokens: number;
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
+  reasoningTokens: number;
   tokensGastosAcumulado: number;
   custoAcumuladoUsd: number;
 }
@@ -128,6 +134,7 @@ export interface RunAccounting {
 export type RunEndMotivo =
   | 'fim_da_lista'
   | 'orcamento_da_janela'
+  | 'orcamento_de_custo'
   | 'limite_de_uso'
   | 'falha_na_task'
   | 'preflight_reprovado'
@@ -166,6 +173,8 @@ export interface RunEventRunStart {
   dry_run: boolean;
   layout: LayoutName;
   capacidades_ausentes: string[];
+  context_injection: ContextInjection | 'n/a';
+  cli_version_abaixo_do_piso: boolean;
 }
 
 export interface RunEventPreflightItem {
@@ -257,8 +266,10 @@ export interface RunEventEnd extends TokenCounters {
   is_error: boolean;
   exit_code: number;
   usou_contexto_execucao: boolean;
-  permission_denials: number;
+  permission_denials: number | null;
   ferramentas_negadas: string | null;
+  reasoning_tokens: number | null;
+  contabilidade_parcial: boolean;
   num_turns: number;
   duration_ms: number;
   duration_api_ms: number;
@@ -274,9 +285,12 @@ export interface RunEventEnd extends TokenCounters {
 export interface RunEventBudgetExhausted {
   event: 'budget_exhausted';
   ts: string;
+  tipo: 'janela' | 'custo';
   proxima_task: string;
   tokens_gastos_acumulado: number;
   window_budget_tokens: number;
+  custo_acumulado_usd: number;
+  max_budget_usd: number;
 }
 
 export interface RunEventRateLimited {
@@ -317,3 +331,37 @@ export type RunEvent =
   | RunEventRateLimited
   | RunEventInterrompido
   | RunEventRunEnd;
+
+/** Endereco do schema publico da configuracao do OpenCode (CT-035). */
+export const OPENCODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json';
+
+/** Nome obrigatorio do agente criado pelo specifica-br (CT-035). */
+export const OPENCODE_AGENTE_EXECUTOR = 'specifica-executor';
+
+/**
+ * Agente nao-interativo declarado pelo arquivo de apoio de execucao (CT-035).
+ *
+ * `mode: 'primary'` e o que torna o agente selecionavel por `--agent`. O
+ * `permission` comeca sempre por `{"*": "allow"}` (RF-007): a avaliacao do
+ * OpenCode usa `findLast` sobre a concatenacao das regras, e a permissao do
+ * agente entra depois da global e da do projeto.
+ */
+export interface ExecutorAgentConfig {
+  description: string;
+  mode: 'primary';
+  permission: Record<string, unknown>;
+}
+
+/**
+ * Conteudo do arquivo de apoio de execucao do OpenCode (CT-035), entregue ao
+ * processo filho por `OPENCODE_CONFIG` (ENV-002).
+ *
+ * `instructions` e opcional por contrato: presente apenas com a forma de
+ * injecao `instructions` e destilado disponivel, e entao com um unico caminho
+ * absoluto. Nunca escrito como lista vazia.
+ */
+export interface ExecutorConfig {
+  $schema: typeof OPENCODE_CONFIG_SCHEMA;
+  instructions?: string[];
+  agent: Record<typeof OPENCODE_AGENTE_EXECUTOR, ExecutorAgentConfig>;
+}

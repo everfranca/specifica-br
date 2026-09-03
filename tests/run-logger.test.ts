@@ -143,3 +143,24 @@ test('readPreviousRuns ignora linhas invalidas sem lancar', async () => {
     ['start', 'end']
   );
 });
+
+test('readPreviousRuns le apenas as 100 execucoes mais recentes', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  await fs.ensureDir(logsDir);
+
+  for (let i = 0; i < 103; i += 1) {
+    const id = String(i).padStart(3, '0');
+    await fs.writeFile(
+      path.join(logsDir, `run_${id}.jsonl`),
+      `{"event":"skip","ts":"x","task":"task-${id}.md","motivo":"DONE","selecionada":true}\n`
+    );
+  }
+
+  const eventos = await new RunLoggerService().readPreviousRuns(logsDir);
+  const tasks = eventos.map((e) => (e as { task: string }).task);
+  assert.strictEqual(tasks.length, 100);
+  assert.ok(!tasks.includes('task-000.md'));
+  assert.ok(!tasks.includes('task-002.md'));
+  assert.ok(tasks.includes('task-003.md'));
+  assert.ok(tasks.includes('task-102.md'));
+});

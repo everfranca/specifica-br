@@ -9,6 +9,14 @@ const WRITE_DENIED = (logsDirLabel: string): string =>
 /** Rotulo estavel usado nas mensagens de erro, independente do caminho absoluto real. */
 const LOGS_DIR_LABEL = '~/.specifica-br/logs/<projeto>/';
 
+/**
+ * Numero maximo de execucoes anteriores lidas por `readPreviousRuns`. O `RUN_ID`
+ * e ordenavel lexicograficamente, entao as ultimas N execucoes sao as mais
+ * recentes; o limite segurou o custo do passo 9 sem esperar a politica de
+ * retencao (TBD-002).
+ */
+const LIMITE_DE_EXECUCOES_LIDAS = 100;
+
 function doisDigitos(valor: number): string {
   return String(valor).padStart(2, '0');
 }
@@ -119,7 +127,8 @@ class RunLoggerService {
   }
 
   /**
-   * Le os `run_*.jsonl` anteriores do mesmo projeto e devolve os eventos
+   * Le os `run_*.jsonl` anteriores do mesmo projeto - apenas as
+   * `LIMITE_DE_EXECUCOES_LIDAS` execucoes mais recentes - e devolve os eventos
    * parseados, ignorando linhas invalidas sem lancar. Insumo da guarda de tasks
    * nao certificadas de RF-018 (aplicada na task-10).
    */
@@ -129,7 +138,10 @@ class RunLoggerService {
     }
 
     const entradas = await fs.readdir(logsDir);
-    const arquivos = entradas.filter((nome) => /^run_.*\.jsonl$/.test(nome)).sort();
+    const arquivos = entradas
+      .filter((nome) => /^run_.*\.jsonl$/.test(nome))
+      .sort()
+      .slice(-LIMITE_DE_EXECUCOES_LIDAS);
     const eventos: RunEvent[] = [];
 
     for (const nome of arquivos) {
