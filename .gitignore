@@ -5,6 +5,10 @@
 *.js
 *.js.map
 *.ts.map
+!scripts/*.js
+
+# Backup do README do GitHub durante o empacotamento
+.readme-github.bak.md
 
 # Dependency directory
 /node_modules
@@ -31,3 +35,6 @@ coverage
 .vscode/
 .idea/
 .DS_Store
+
+# Tarballs gerados por npm pack
+*.tgz
