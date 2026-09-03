@@ -23,7 +23,12 @@
     "dev": "tsc && npm run copy:assets && npm run add:shebang && node dist/index.js",
     "build:tests": "npm run build && tsc -p tsconfig.test.json",
     "test": "npm run build:tests && node --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" \"tests/**/*.test.js\"",
-    "test:watch": "node --test --watch \"tests/**/*.test.js\""
+    "test:watch": "node --test --watch \"tests/**/*.test.js\"",
+    "prepack": "node scripts/swap-readme.js --npm",
+    "postpack": "node scripts/swap-readme.js --restore"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "spec driven development",

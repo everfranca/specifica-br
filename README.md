@@ -1,3 +1,13 @@
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/readme-header-light.png">
+  <img src="docs/assets/brand/readme-header-dark.png" alt="specifica-br — orquestrador CLI SDD pt-BR" width="600">
+</picture>
+
+[![Versão no npm](https://img.shields.io/npm/v/specifica-br?style=flat-square&label=npm&color=5FC9D6&labelColor=0B2E33)](https://www.npmjs.com/package/specifica-br)
+[![Node.js](https://img.shields.io/node/v/specifica-br?style=flat-square&label=node&color=5FC9D6&labelColor=0B2E33)](https://nodejs.org)
+[![Licença MIT](https://img.shields.io/npm/l/specifica-br?style=flat-square&label=licen%C3%A7a&color=5FC9D6&labelColor=0B2E33)](LICENSE)
+[![Documentação](https://img.shields.io/badge/documenta%C3%A7%C3%A3o-github-5FC9D6?style=flat-square&labelColor=0B2E33)](https://github.com/everfranca/specifica-br#readme)
+
 # Specifica-BR
 
 Ferramenta de automação para desenvolvimento guiado por especificações (SDD) com IA. Otimizado para o ecossistema brasileiro.
@@ -145,7 +155,7 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | Opção | Padrão | Descrição |
 |:---|:---|:---|
 | `--tool <slug>` | detectado | Ferramenta de IA: `claudecode`, `cursor`, `gemini-cli`, `kiro`, `opencode` (sem distinção de caixa). Atualiza o registro do projeto. |
-| `--model <modelo>` | `sonnet` | Modelo da ferramenta. |
+| `--model <modelo>` | `opus` | Modelo da ferramenta. |
 | `--effort <nível>` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`. |
 | `--fallback-model <modelo>` | `''` | Modelo de fallback. |
 | `--auto-approve` | `false` | Concede acesso total, sem prompts de permissão. |
@@ -158,7 +168,7 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `--no-cache-tuning` | ligado | Desliga a otimização de cache do prompt. |
 | `--no-context-pack` | ligado | Não constrói nem injeta o Contexto de Execução. |
 | `--context-injection <forma>` | `prompt` | Forma de injeção do Contexto de Execução: `prompt` concatena o destilado ao prompt da task; `instructions` declara o caminho do destilado na definição do agente de execução. Só tem efeito no OpenCode. |
-| `--pack-model <modelo>` | `sonnet` | Modelo da construção do Contexto de Execução. |
+| `--pack-model <modelo>` | `opus` | Modelo da construção do Contexto de Execução. |
 | `--pack-effort <nível>` | `low` | Esforço da construção do Contexto de Execução. |
 | `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
 | `--tasks <seleção>` | `''` | Seleção de tasks, ex.: `1-3,7`. |
@@ -634,26 +644,134 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
-- `executar-tasks`: `--tool`, `--model` (`sonnet`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--pack-model` (`sonnet`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
+- `executar-tasks`: `--tool`, `--model` (`opus`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--pack-model` (`opus`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
 - `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout; `config layout <nome>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento
 
-Para contribuir com o projeto:
+### Requisitos
+
+- Node.js 18 ou superior
+- npm 8 ou superior
+- Git
+
+### Setup
 
 ```bash
-# Instalar dependências
+git clone https://github.com/everfranca/specifica-br.git
+cd specifica-br
 npm install
-
-# Compilar o projeto
-npm run build
-
-# Executar em modo de desenvolvimento
-npm run dev
-
-# Executar o projeto
-npm start
 ```
+
+### Scripts npm
+
+| Script | O que faz |
+|:---|:---|
+| `npm run build` | Compila o TypeScript para `dist/`, copia os assets e adiciona o shebang ao ponto de entrada |
+| `npm run dev` | Compila e executa a CLI a partir de `dist/` |
+| `npm start` | Executa a CLI já compilada |
+| `npm run build:tests` | Compila o projeto e a suíte de testes (`tsconfig.test.json`) |
+| `npm test` | Compila e roda os testes no runner nativo do Node, com cobertura |
+| `npm run test:watch` | Roda os testes em modo watch |
+| `npm run copy:assets` | Copia `src/assets/` para `dist/` |
+| `npm run add:shebang` | Insere o shebang em `dist/index.js` |
+
+### Testes
+
+A suíte usa o runner nativo do Node (`node --test`), sem framework externo. Os arquivos ficam em `tests/`, espelhando a estrutura de `src/`.
+
+```bash
+npm test
+
+# Um arquivo específico
+node --test tests/utils/nome-do-servico.test.js
+
+# Filtrando por nome do teste
+node --test --test-name-pattern="descrição do teste" "tests/**/*.test.js"
+```
+
+### Estrutura de `src/`
+
+```
+src/
+├── commands/          # Comandos da CLI
+├── utils/             # Funções e serviços utilitários
+│   ├── terminal/      # Primitivas de terminal (cor, glifo, banner, spinner)
+│   ├── layouts/       # Estratégias dos layouts de exibição
+│   └── tool-adapters/ # Adapters de capacidades por ferramenta de IA
+├── types/             # Definições de tipos TypeScript
+├── assets/            # Arquivos estáticos incluídos no pacote (templates, boilerplate, JSON)
+└── index.ts           # Ponto de entrada principal
+```
+
+Arquivos estáticos precisam ser acessados por caminho relativo ao pacote instalado (`__dirname`, `path.resolve()`), nunca por caminhos que só existem no ambiente de desenvolvimento. As demais diretrizes de estilo, nomenclatura e idioma estão em [AGENTS.md](AGENTS.md).
+
+## Publicação
+
+### Os dois READMEs
+
+O repositório mantém dois READMEs versionados, para dois públicos diferentes:
+
+| Arquivo | Público | Conteúdo |
+|:---|:---|:---|
+| `README.md` (raiz) | GitHub | Documentação completa: workflow, todos os comandos e opções, arquitetura, desenvolvimento e publicação |
+| `docs/README.npm.md` | npm | Versão enxuta: pitch, instalação, quick start, comandos resumidos e link para o GitHub |
+
+O npm sempre publica o `README.md` da raiz do pacote, ignora o campo `files` para esse arquivo e renderiza apenas ele na página do registry — não há como apontar o npm para outro arquivo. Por isso os dois são trocados automaticamente durante o empacotamento.
+
+**O README exibido na página do npm é gerado a partir de `docs/README.npm.md`.** Alterações destinadas ao registry devem ser feitas nesse arquivo; editar o `README.md` da raiz não muda a página do npm.
+
+### O mecanismo de swap
+
+O script [`scripts/swap-readme.js`](scripts/swap-readme.js) é Node puro, sem dependências e sem chamadas de shell, portanto funciona igual em Windows, Linux e macOS. Ele tem dois modos:
+
+```bash
+node scripts/swap-readme.js --npm       # guarda o README do GitHub em .readme-github.bak.md e aplica o do npm
+node scripts/swap-readme.js --restore   # restaura o README do GitHub e remove o backup
+```
+
+Os dois modos estão ancorados no ciclo de vida do npm:
+
+```json
+"prepack": "node scripts/swap-readme.js --npm",
+"postpack": "node scripts/swap-readme.js --restore"
+```
+
+`prepack` e `postpack` são o par correto porque cobrem os dois comandos que geram tarball:
+
+- `npm publish` executa `prepublishOnly`, `prepack`, `prepare`, `postpack`, `publish`, `postpublish`
+- `npm pack` executa `prepack`, `prepare`, `postpack`
+
+`prepublishOnly` não serve para restaurar, por não rodar no `npm pack`, e `prepare` também roda em `npm install` local, o que dispararia o swap fora de hora. Como o `postpack` roda depois do tarball já estar montado e antes do envio, o pacote publicado leva a versão npm do README e o repositório volta ao estado original.
+
+O backup `.readme-github.bak.md` é ignorado pelo Git.
+
+### Recuperação de swap travado
+
+Se o empacotamento falhar entre `prepack` e `postpack`, o `postpack` não roda e o `README.md` da raiz fica com a versão do npm, com o backup ainda presente. O script detecta esse estado: uma nova execução de `--npm` é recusada, para não sobrescrever o backup legítimo com o README errado.
+
+Para sair desse estado:
+
+```bash
+node scripts/swap-readme.js --restore
+git status
+```
+
+Se o backup tiver sido perdido e o `README.md` da raiz estiver com a versão do npm, recupere pelo Git:
+
+```bash
+git checkout -- README.md
+rm -f .readme-github.bak.md
+```
+
+### Verificando antes de publicar
+
+```bash
+npm pack
+tar -tf specifica-br-<versão>.tgz
+```
+
+O tarball deve conter apenas `dist/**/*`, `package.json`, `README.md` e `LICENSE` — sem `scripts/`, sem `docs/` e sem o backup. Após o `npm pack`, `git status` precisa ficar limpo.
 
 ## Licença
 
