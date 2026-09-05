@@ -63,19 +63,27 @@ export function signature(painter: Painter): string {
 }
 
 const ROTULOS: Record<StatusKind, string> = {
-  ok: '[  OK ]',
-  aviso: '[ AVIS]',
-  erro: '[ ERRO]',
-  info: '[ INFO]',
+  ok: '[OK]',
+  aviso: '[AVISO]',
+  erro: '[ERRO]',
+  info: '[INFO]',
 };
 
+/* Largura da calha em que os rotulos se alinham. O preenchimento ate ela e
+   texto neutro, escrito FORA da marcacao de cor (RF-001). */
+const CALHA = 7;
+
 /**
- * Devolve a linha de estado: o rotulo de sete colunas pintado no papel
- * semantico, seguido de um unico espaco e da mensagem (cli-layout.md: nunca
- * dois espacos, nunca zero). Nenhum emoji e emitido em nenhum nivel (RF-013).
+ * Devolve a linha de estado: o rotulo por extenso pintado no papel semantico,
+ * preenchido a direita ate a calha de sete colunas, seguido de um unico espaco
+ * e da mensagem (cli-layout.md: nunca dois espacos, nunca zero). O texto da
+ * mensagem comeca sempre na coluna 9, com ou sem cor (RF-001, RNF-001), e o
+ * preenchimento fica fora de qualquer sequencia de escape. Nenhum emoji e
+ * emitido em nenhum nivel (RF-013).
  *
  * Quando a mensagem e vazia (ou so espacos), devolve apenas o rotulo pintado,
- * sem espaco a direita — util para medir a largura visivel do rotulo.
+ * sem preenchimento e sem espaco a direita, para nao abrir lacuna dentro do
+ * separador horizontal que o compoe (RF-002).
  */
 export function status(kind: StatusKind, mensagem: string, painter: Painter): string {
   const cor: Record<StatusKind, (texto: string) => string> = {
@@ -84,6 +92,10 @@ export function status(kind: StatusKind, mensagem: string, painter: Painter): st
     erro: painter.erro,
     info: painter.info,
   };
-  const rotulo = cor[kind](ROTULOS[kind]);
-  return mensagem.trim() === '' ? rotulo : `${rotulo} ${mensagem}`;
+  const rotulo = ROTULOS[kind];
+  if (mensagem.trim() === '') {
+    return cor[kind](rotulo);
+  }
+  const preenchimento = ' '.repeat(Math.max(0, CALHA - rotulo.length));
+  return cor[kind](rotulo) + preenchimento + ' ' + mensagem;
 }

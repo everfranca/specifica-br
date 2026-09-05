@@ -8,7 +8,6 @@ import {
   createPainter,
   detectLevel,
   detectGlyphLevel,
-  signature,
   status,
 } from '../utils/terminal/index.js';
 import { createLayout } from '../utils/layouts/index.js';
@@ -26,6 +25,8 @@ import { PreflightService, abaixoDoPiso } from '../utils/preflight-service.js';
 import { ContextPackService } from '../utils/context-pack-service.js';
 import type { ContextPackContexto } from '../utils/context-pack-service.js';
 import { resolveHome, shortenPath } from '../utils/path-resolver.js';
+import { formatarDuracao } from '../utils/formatos.js';
+import { EsperaPorLimiteDeUso, relogioDoSistema } from '../utils/espera-limite.js';
 import { validateOptions } from '../utils/executar-tasks-validation.js';
 import { TaskRunner, ajustarPorCapacidades } from '../utils/task-runner.js';
 import type { RunnerExecutorConfig } from '../utils/task-runner.js';
@@ -56,28 +57,6 @@ function descricaoPermissoes(opcoes: ExecutarTasksOptions): string {
     return 'ACESSO TOTAL (bypassPermissions) - Read/Write/Bash/Skill/MCP';
   }
   return modo;
-}
-
-/**
- * Texto da linha `Contexto Exec` do cabecalho. Em `--dry-run` o mecanismo esta
- * ligado mas nao constroi nada, e o cabecalho precisa dizer o que de fato vai
- * acontecer.
- */
-function descricaoContextoExec(
-  opcoes: ExecutarTasksOptions,
-  tetoTexto: string,
-  formaSelecionavel: boolean
-): string {
-  if (!opcoes.contextPack) {
-    return 'off';
-  }
-  // A forma so e anunciada onde ha escolha: na ferramenta sem a capacidade ela
-  // foi recusada em `ajustarPorCapacidades` e anuncia-la seria mentira (CT-030).
-  const injecao = formaSelecionavel ? `   injecao: ${opcoes.contextInjection}` : '';
-  if (opcoes.dryRun) {
-    return `on   (--dry-run: nao sera construido nem injetado)${injecao}`;
-  }
-  return `on   construcao: ${opcoes.packModel}/${opcoes.packEffort}   teto: ${tetoTexto}${injecao}`;
 }
 
 async function executar(
@@ -156,6 +135,7 @@ async function executar(
     isTTY,
     largura: process.stdout.columns || 80,
     stream: process.stdout,
+    estiloCabecalho: config.cabecalho,
   });
 
   const fileService = new FileService();
@@ -284,8 +264,8 @@ async function executar(
     extra_dirs: extraDirs,
     cache_tuning: opcoes.cacheTuning,
     context_pack: opcoes.contextPack,
-    pack_model: opcoes.packModel,
-    pack_effort: opcoes.packEffort,
+    pack_model: opcoes.model,
+    pack_effort: opcoes.effort,
     pack_max_tokens: opcoes.packMaxTokens,
     dry_run: opcoes.dryRun,
     layout: layoutName,
@@ -294,51 +274,84 @@ async function executar(
       ? opcoes.contextInjection
       : 'n/a',
     cli_version_abaixo_do_piso: abaixoDoPiso(ferramenta, versao),
+    max_wait_segundos: validadas.maxWaitSegundos,
+    wait_on_limit: validadas.waitOnLimit,
+    cabecalho: config.cabecalho,
   });
 
-  layout.header([
-    `${signature(painter)}  executar-tasks`,
-    '',
-    `  Feature        ${featureDirArg}`,
-    `  Ferramenta     ${ferramenta} (${getExecutavel(ferramenta)} ${versao || 'desconhecida'})`,
-    `  Modelo         ${opcoes.model}   Effort: ${opcoes.effort}   Fallback: ${
-      opcoes.fallbackModel || 'nenhum'
-    }`,
-    `  Permissoes     ${descricaoPermissoes(opcoes)}`,
-    `  Dirs extras    ${
-      extraDirs.length ? extraDirs.map(shortenPath).join(' ') : 'nenhum'
-    }`,
-    `  Cache tuning   ${opcoes.cacheTuning ? 'on' : 'off'}`,
-    `  Contexto Exec  ${descricaoContextoExec(
-      opcoes,
-      tetoTexto,
-      adapter.capacidades.formaDeInjecaoSelecionavel
-    )}`,
-    `  Orcamentos     task=$${opcoes.maxBudgetUsd}   janela=${janelaTexto}`,
-    `  Tasks          ${selecionadas.length} de ${todas.length} selecionadas (${
-      opcoes.tasks.trim() || 'todas'
-    })`,
-    `  Registro       ${jsonlPathCurto}`,
-  ]);
+  // Cabecalho por dados (RF-005): o comando entrega `DadosDeAbertura` e a
+  // forma e do estilo configurado. Nenhuma string de cabecalho e montada aqui.
+  layout.header({
+    feature: featureDirArg,
+    tasksSelecionadas: selecionadas.length,
+    tasksTotal: todas.length,
+    criterioDeSelecao: opcoes.tasks.trim() || 'todas',
+    ferramenta,
+    executavel: getExecutavel(ferramenta),
+    versao: versao || 'desconhecida',
+    model: opcoes.model,
+    effort: opcoes.effort,
+    fallbackModel: opcoes.fallbackModel || 'nenhum',
+    permissoes: descricaoPermissoes(opcoes),
+    contextoLigado: opcoes.contextPack,
+    contextoSimulado: opcoes.dryRun,
+    contextoTeto: tetoTexto,
+    contextoInjecao: adapter.capacidades.formaDeInjecaoSelecionavel
+      ? opcoes.contextInjection
+      : null,
+    cacheTuning: opcoes.cacheTuning,
+    dirsExtras: extraDirs.map((dir) => shortenPath(dir)),
+    tetoCustoPorTask: `$${opcoes.maxBudgetUsd}`,
+    tetoJanela: janelaTexto,
+    tetoEspera: validadas.waitOnLimit
+      ? formatarDuracao(validadas.maxWaitSegundos)
+      : 'desligada',
+    registroPath: jsonlPathCurto,
+  });
 
   for (const aviso of avisosCapacidade) {
     layout.message('aviso', aviso);
   }
 
+  // Instancia unica da politica de espera do lote (CT-048, Passo 1 da secao
+  // 5.1). E ela que faz o teto de `--max-wait` valer para o lote inteiro,
+  // somando as esperas das tasks e as da construcao do destilado. A ligacao com
+  // o `TaskRunner` e com o `ContextPackService` e das tasks 9 e 10.
+  const esperaPorLimite = new EsperaPorLimiteDeUso({
+    relogio: relogioDoSistema,
+    layout,
+    logger,
+    isTTY: isTTY && !process.env.CI,
+    tetoAcumuladoSegundos: validadas.maxWaitSegundos,
+    ligada: validadas.waitOnLimit,
+  });
+
   const accountingRef = accounting;
-  const contextPack = new ContextPackService(adapter, accountingRef, logger);
+  // CT-048: a MESMA instancia de espera injetada no `TaskRunner`. E o que faz o
+  // teto de `--max-wait` valer para o lote inteiro, somando as esperas das tasks
+  // e as da construcao do destilado (RF-016, RF-021).
+  const contextPack = new ContextPackService(
+    adapter,
+    accountingRef,
+    logger,
+    esperaPorLimite,
+    relogioDoSistema
+  );
   const packContexto: ContextPackContexto = {
     featureDir,
     projectRoot: process.cwd(),
     cwd: process.cwd(),
     opcoes: {
+      // RF-012: o modelo e o esforco da construcao sao os do lote.
       contextPack: opcoes.contextPack,
-      packModel: opcoes.packModel,
-      packEffort: opcoes.packEffort,
+      model: opcoes.model,
+      effort: opcoes.effort,
       packMaxTokens: opcoes.packMaxTokens,
       cacheTuning: opcoes.cacheTuning,
     },
-    onMensagem: (mensagem) => process.stdout.write(`${mensagem}\n`),
+    // RF-003: canal unico. O layout monta o rotulo, encerra o indicador de
+    // progresso e escreve a linha.
+    onMensagem: (kind, texto) => layout.message(kind, texto),
   };
 
   const runner = new TaskRunner({
@@ -347,6 +360,10 @@ async function executar(
     accounting: accountingRef,
     logger,
     layout,
+    // CT-048: a MESMA instancia do `ContextPackService` - e o que faz o teto de
+    // `--max-wait` valer para o lote inteiro.
+    espera: esperaPorLimite,
+    relogio: relogioDoSistema,
     opcoes,
     ferramenta,
     featureDir,
@@ -460,13 +477,25 @@ async function executar(
       );
     } else {
       const packResult = await contextPack.ensure(packContexto);
+
+      // RF-021: esgotada a espera durante a construcao, o lote encerra com
+      // motivo de limite de uso e codigo 1, SEM iniciar nenhuma task e SEM
+      // reaproveitar destilado desatualizado.
+      if (packResult.decisao === 'falhou' && packResult.motivo === 'limite_de_uso') {
+        await runner.encerrar('limite_de_uso');
+        process.exitCode = 1;
+        return;
+      }
+
       runner.setPackPath(contextPack.caminhoParaInjecao(packResult));
     }
 
     // 12 e 13. Loop das tasks e encerramento.
     const motivo = await runner.run(selecionadas);
     await runner.encerrar(motivo);
-    process.exitCode = motivo === 'falha_na_task' ? 1 : 0;
+    // RF-020: a desistencia da espera encerra com codigo 1 - diferente de zero
+    // e distinto do codigo de conclusao normal (CT-040).
+    process.exitCode = motivo === 'falha_na_task' || motivo === 'limite_de_uso' ? 1 : 0;
   } finally {
     process.removeListener('SIGINT', aoSigint);
     process.removeListener('SIGTERM', aoSigterm);
@@ -573,19 +602,22 @@ async function acaoEnvolvida(
 }
 
 /**
- * Subcomando `executar-tasks` (CT-001). As 24 opcoes da secao 4.1 do techspec,
+ * Subcomando `executar-tasks` (CT-001). As 25 opcoes da secao 4.1 do techspec,
  * na forma exata da coluna "Declaracao Commander". As quatro negativas sao
  * declaradas sozinhas: em Commander 14 isso lhes da default `true` e `false`
  * quando informadas, e nenhuma opcao positiva correspondente e exposta.
- * `allowUnknownOption` fica desligado (padrao), rejeitando opcao desconhecida
- * antes de qualquer execucao.
+ * `--model` e `--effort` nao usam `requiredOption` de proposito: a mensagem
+ * literal com exemplo de invocacao (RF-011) e produzida por `validateOptions`,
+ * primeira instrucao da acao. `allowUnknownOption` fica desligado (padrao),
+ * rejeitando opcao desconhecida antes de qualquer execucao — e o que recusa
+ * `--pack-model` e `--pack-effort`, removidas sem convivencia (RF-028, D12).
  */
 export const executarTasksCommand = new Command('executar-tasks')
   .description('Executa em lote os arquivos task-*.md de uma feature')
   .argument('<feature-dir>', 'Caminho do diretorio da feature')
   .option('--tool <slug>', 'Ferramenta de IA (atualiza o registro do projeto)')
-  .option('--model <modelo>', 'Modelo da ferramenta', 'sonnet')
-  .option('--effort <nivel>', 'Nivel de esforco (low|medium|high|xhigh|max)', 'medium')
+  .option('--model <modelo>', 'Modelo da ferramenta (obrigatoria)')
+  .option('--effort <nivel>', 'Nivel de esforco (low|medium|high|xhigh|max) (obrigatoria)')
   .option('--fallback-model <modelo>', 'Modelo de fallback', '')
   .option('--auto-approve', 'Concede acesso total sem prompts de permissao', false)
   .option('--permission-mode <modo>', 'Modo de permissao explicito', '')
@@ -601,8 +633,15 @@ export const executarTasksCommand = new Command('executar-tasks')
     'Forma de injecao do Contexto de Execucao (prompt|instructions)',
     'prompt'
   )
-  .option('--pack-model <modelo>', 'Modelo da construcao do Contexto de Execucao', 'sonnet')
-  .option('--pack-effort <nivel>', 'Esforco da construcao do Contexto de Execucao', 'low')
+  .option(
+    '--max-wait <duracao>',
+    'Teto de espera acumulada por limite de uso (ex.: 90, 30m, 6h, 1h30m)',
+    '6h'
+  )
+  .option(
+    '--no-wait-on-limit',
+    'Nao aguarda a renovacao da cota; encerra o lote no primeiro limite de uso'
+  )
   .option('--pack-max-tokens <n>', 'Teto de tamanho do Contexto de Execucao', '8000')
   .option('--tasks <selecao>', 'Selecao de tasks (ex.: 1-3,7)', '')
   .option('--allow <regra>', 'Regra adicional de --allowedTools (repetivel)', colecionar, [])

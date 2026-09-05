@@ -28,8 +28,9 @@ export interface ValidatedOptions {
   cacheTuning: boolean;
   contextPack: boolean;
   contextInjection: ContextInjection;
-  packModel: string;
-  packEffort: EffortLevel;
+  maxWait: string;
+  maxWaitSegundos: number;
+  waitOnLimit: boolean;
   packMaxTokens: number;
   tasks: string;
   allow: string[];
@@ -51,25 +52,101 @@ const PERMISSION: readonly PermissionMode[] = [
   'bypassPermissions',
 ];
 
+const TETO_MAX_WAIT_SEGUNDOS = 43200;
+const MAX_WAIT_PADRAO = '6h';
+const RE_SEGUNDOS = /^\d+$/;
+const RE_MINUTOS = /^\d+m$/;
+const RE_HORAS = /^\d+h$/;
+const RE_HORAS_E_MINUTOS = /^\d+h\d+m$/;
+
+const EXEMPLO_DE_INVOCACAO =
+  'Exemplo: specifica-br executar-tasks specs/features/minha-feature --model sonnet --effort medium';
+
+/**
+ * Obrigatoriedade de `--model` (RF-011) verificada aqui, e nao via
+ * `requiredOption`, porque a mensagem padrao do Commander nao traz o exemplo
+ * de invocacao exigido pelo PRD. Ausente ou vazia lanca a mensagem literal.
+ */
+function modeloObrigatorio(valor: unknown): string {
+  if (valor === undefined || String(valor).trim() === '') {
+    throw new Error(
+      `--model é obrigatória. Informe o modelo que a ferramenta deve usar no lote. ${EXEMPLO_DE_INVOCACAO}`
+    );
+  }
+  return String(valor);
+}
+
+/**
+ * Obrigatoriedade e conjunto fechado de `--effort` (RF-011), com a mesma
+ * justificativa de `modeloObrigatorio`: ausente lanca a mensagem literal de
+ * obrigatoriedade; presente e fora do conjunto, a de valor invalido.
+ */
+function esforcoObrigatorio(valor: unknown): EffortLevel {
+  if (valor === undefined || valor === '') {
+    throw new Error(
+      `--effort é obrigatória. Valores aceitos: low, medium, high, xhigh, max. ${EXEMPLO_DE_INVOCACAO}`
+    );
+  }
+  const texto = String(valor);
+  for (const item of EFFORT) {
+    if (item === texto) {
+      return item;
+    }
+  }
+  throw new Error(
+    `Valor inválido para --effort: ${texto}. Valores aceitos: low, medium, high, xhigh, max.`
+  );
+}
+
+/**
+ * Converte `--max-wait` (RF-026) para segundos segundo a gramatica de quatro
+ * formas da secao 4.1 do techspec. O sinal negativo nao casa com nenhuma das
+ * regexes, o que recusa valor negativo sem verificacao adicional.
+ */
+function converterMaxWait(valor: string): number {
+  if (RE_SEGUNDOS.test(valor)) {
+    return Number(valor);
+  }
+  if (RE_MINUTOS.test(valor)) {
+    return Number(valor.slice(0, -1)) * 60;
+  }
+  if (RE_HORAS_E_MINUTOS.test(valor)) {
+    const separador = valor.indexOf('h');
+    return (
+      Number(valor.slice(0, separador)) * 3600 +
+      Number(valor.slice(separador + 1, -1)) * 60
+    );
+  }
+  if (RE_HORAS.test(valor)) {
+    return Number(valor.slice(0, -1)) * 3600;
+  }
+  throw new Error(
+    `Valor inválido para --max-wait: ${valor}. Formas aceitas: 90 (segundos), 30m, 6h, 1h30m.`
+  );
+}
+
+/**
+ * Valida `--max-wait` e devolve os segundos. Padrao `6h`; acima de 12h e
+ * recusado com a mensagem de teto, nunca reduzido em silencio (D11). O valor
+ * `0` e aceito e significa espera desligada por teto.
+ */
+function validarMaxWait(valor: unknown): number {
+  const texto = valor === undefined ? MAX_WAIT_PADRAO : String(valor);
+  const segundos = converterMaxWait(texto);
+  if (segundos > TETO_MAX_WAIT_SEGUNDOS) {
+    throw new Error(`--max-wait aceita no máximo 12h. Valor recebido: ${texto}.`);
+  }
+  return segundos;
+}
+
 interface RegrasNumericas {
   min?: number;
   minExclusivo?: number;
   inteiro?: boolean;
 }
 
-function textoNaoVazio(valor: unknown, padrao: string, nome: string): string {
-  if (valor === undefined) {
-    return padrao;
-  }
-  const texto = String(valor);
-  if (texto.trim() === '') {
-    throw new Error(`${nome} nao pode ser vazio`);
-  }
-  return texto;
-}
-
 /**
- * valida `valor` contra um conjunto fechado, devolvendo `padrao` quando ausente.
+ * Valida `valor` contra um conjunto fechado, devolvendo `padrao` quando ausente.
  * O generico faz o tipo de retorno derivar do conjunto informado, provando no
  * compilador o que um `as` apenas afirmaria.
  */
@@ -153,10 +230,12 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     tool = slug;
   }
 
-  const model = textoNaoVazio(b.model, 'sonnet', '--model');
-  const packModel = textoNaoVazio(b.packModel, 'sonnet', '--pack-model');
-  const effort = enumValido(b.effort, EFFORT, 'medium', '--effort');
-  const packEffort = enumValido(b.packEffort, EFFORT, 'low', '--pack-effort');
+  // Ordem obrigatoria do Passo 0 da secao 5.1 (RNF-004): modelo, esforco,
+  // teto de espera e so entao as demais validacoes, inalteradas.
+  const model = modeloObrigatorio(b.model);
+  const effort = esforcoObrigatorio(b.effort);
+  const maxWait = b.maxWait === undefined ? MAX_WAIT_PADRAO : String(b.maxWait);
+  const maxWaitSegundos = validarMaxWait(maxWait);
   const contextInjection = enumValido(
     b.contextInjection,
     CONTEXT_INJECTION,
@@ -215,8 +294,11 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     cacheTuning: b.cacheTuning !== false,
     contextPack: b.contextPack !== false,
     contextInjection,
-    packModel,
-    packEffort,
+    maxWait,
+    maxWaitSegundos,
+    // `--no-wait-on-limit` negable entrega `false` quando informada e `true`
+    // caso contrario (RF-027); `!== false` cobre tambem o `undefined`.
+    waitOnLimit: b.waitOnLimit !== false,
     packMaxTokens,
     tasks,
     allow,

@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ContextPackService } from '../dist/utils/context-pack-service.js';
+import { createLayout } from '../dist/utils/layouts/index.js';
+import type { LayoutContext } from '../dist/utils/layouts/index.js';
+import { createPainter, LEVEL, GLYPH } from '../dist/utils/terminal/index.js';
+import type { StatusKind } from '../dist/utils/terminal/index.js';
 import { AccountingService } from '../dist/utils/accounting.js';
 import * as promptModule from '../dist/utils/context-pack-prompt.js';
 import type { TaskResult } from '../dist/types/tool-adapter.js';
@@ -42,35 +46,110 @@ function baseResult(over: Partial<TaskResult> = {}): TaskResult {
 
 interface AdapterConfig {
   resultado?: TaskResult;
+  /** Resultados por chamada, na ordem. Esgotados, vale `resultado`. */
+  resultados?: TaskResult[];
   escreveArquivo?: boolean;
+  /** Chamadas, a partir de 1, em que o arquivo NAO e escrito. */
+  naoEscreveNasChamadas?: number[];
   tamanhoArquivo?: number;
   stderr?: string;
+  relatoDeModeloEfetivo?: boolean;
+  rateLimit?: boolean;
 }
 
 function makeAdapter(cfg: AdapterConfig = {}) {
-  const estado = { chamadas: 0, ultimoPrompt: '' };
+  const estado = {
+    chamadas: 0,
+    ultimoPrompt: '',
+    entradas: [] as Array<{ packModel: string; packEffort: string }>,
+  };
   const adapter = {
+    capacidades: {
+      execucaoNaoInterativa: true,
+      modoSemPromptDePermissao: true,
+      saidaEstruturadaComTokens: true,
+      identificadorDeSessao: true,
+      injecaoDeContextoNoSystemPrompt: true,
+      liberacaoDeDiretoriosDeLeitura: true,
+      consultaAosMcps: true,
+      relatoDeCustoEmUSD: true,
+      tetoDeCustoNativo: true,
+      modeloDeFallback: true,
+      otimizacaoDeCacheDePrompt: true,
+      relatoDeNegacoesDePermissao: true,
+      formaDeInjecaoSelecionavel: false,
+      relatoDeModeloEfetivo: cfg.relatoDeModeloEfetivo ?? true,
+    },
+    detectRateLimit(_texto: string): boolean {
+      return cfg.rateLimit === true;
+    },
     async runPack(
       prompt: string,
-      entrada: { featureDir: string },
+      entrada: { featureDir: string; packModel: string; packEffort: string },
       _cwd: string,
       onStderrChunk?: (chunk: string) => void
     ): Promise<TaskResult> {
       estado.chamadas += 1;
       estado.ultimoPrompt = prompt;
+      estado.entradas.push({ packModel: entrada.packModel, packEffort: entrada.packEffort });
       if (onStderrChunk) {
         onStderrChunk(cfg.stderr ?? 'erro do filho\n');
       }
-      if (cfg.escreveArquivo !== false) {
+      const pula = cfg.naoEscreveNasChamadas?.includes(estado.chamadas) ?? false;
+      if (cfg.escreveArquivo !== false && !pula) {
         await fs.writeFile(
           path.join(entrada.featureDir, 'contexto-execucao.md'),
           'x'.repeat(cfg.tamanhoArquivo ?? 350)
         );
       }
-      return cfg.resultado ?? baseResult();
+      const daVez = cfg.resultados?.[estado.chamadas - 1];
+      return daVez ?? cfg.resultado ?? baseResult();
     },
   };
   return { adapter, estado };
+}
+
+/**
+ * Espera falsa (CT-048). Nao aguarda tempo real: apenas registra a entrada e
+ * devolve o desfecho programado, na ordem.
+ */
+function makeEspera(desfechos: Array<{ retomar: boolean; motivo?: string }>) {
+  const entradas: Array<Record<string, unknown>> = [];
+  const espera = {
+    async aguardar(entrada: Record<string, unknown>) {
+      entradas.push(entrada);
+      const d = desfechos[entradas.length - 1] ?? { retomar: false, motivo: 'sem desfecho' };
+      return {
+        retomar: d.retomar,
+        motivoDaDesistencia: d.retomar ? null : (d.motivo ?? 'teto de espera esgotado'),
+      };
+    },
+  };
+  return { espera, entradas };
+}
+
+/** Relogio falso: avanca `passoMs` a cada leitura. */
+function makeRelogio(passoMs = 64_000) {
+  let instante = BASE_MS;
+  return {
+    agora(): number {
+      const atual = instante;
+      instante += passoMs;
+      return atual;
+    },
+    async esperar(): Promise<void> {},
+  };
+}
+
+/** Canal unico de mensagens (RF-003): captura `(kind, texto)`. */
+function makeCanal() {
+  const mensagens: Array<[string, string]> = [];
+  return {
+    mensagens,
+    onMensagem: (kind: string, texto: string): void => {
+      mensagens.push([kind, texto]);
+    },
+  };
 }
 
 function makeLogger() {
@@ -94,8 +173,8 @@ function makeContexto(over: Record<string, unknown> = {}) {
     cwd: root,
     opcoes: {
       contextPack: true,
-      packModel: 'sonnet',
-      packEffort: 'low' as const,
+      model: 'sonnet',
+      effort: 'low' as const,
       packMaxTokens: 8000,
       cacheTuning: true,
     },
@@ -266,12 +345,12 @@ test('falha na construcao emite o AVISO com o texto exato', async () => {
   const { adapter } = makeAdapter({ escreveArquivo: false });
   const { logger } = makeLogger();
   const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
-  const mensagens: string[] = [];
+  const canal = makeCanal();
 
-  await svc.ensure(makeContexto({ onMensagem: (m: string) => mensagens.push(m) }));
-  assert.ok(
-    mensagens.includes('[ AVIS] falha ao construir o Contexto de Execucao - seguindo sem ele')
-  );
+  await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+  assert.deepEqual(canal.mensagens, [
+    ['aviso', 'falha ao construir o Contexto de Execucao - seguindo sem ele'],
+  ]);
 });
 
 test('falha na construcao acumula os tokens gastos', async () => {
@@ -317,17 +396,20 @@ test('acima do teto emite o AVISO com o texto exato e marca pack_over_ceiling', 
   const { adapter } = makeAdapter({ tamanhoArquivo: 350 });
   const { logger, eventos } = makeLogger();
   const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
-  const mensagens: string[] = [];
+  const canal = makeCanal();
 
   await svc.ensure(
     makeContexto({
-      onMensagem: (m: string) => mensagens.push(m),
+      onMensagem: canal.onMensagem,
       opcoes: { ...makeContexto().opcoes, packMaxTokens: 10 },
     })
   );
   assert.ok(
-    mensagens.includes(
-      '[ AVIS] Contexto de Execucao acima do teto: ~100 > 10 tokens. O excedente sera pago em cada task.'
+    canal.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' &&
+        texto ===
+          'Contexto de Execucao acima do teto: ~100 > 10 tokens. O excedente sera pago em cada task.'
     )
   );
   const ev = eventos.find((e) => e.event === 'pack_build');
@@ -353,16 +435,16 @@ test('pack-max-tokens igual a 0 desliga a verificacao de teto', async () => {
   const { adapter } = makeAdapter({ tamanhoArquivo: 5000 });
   const { logger } = makeLogger();
   const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
-  const mensagens: string[] = [];
+  const canal = makeCanal();
 
   const r = await svc.ensure(
     makeContexto({
-      onMensagem: (m: string) => mensagens.push(m),
+      onMensagem: canal.onMensagem,
       opcoes: { ...makeContexto().opcoes, packMaxTokens: 0 },
     })
   );
   assert.equal(r.acimaDoTeto, false);
-  assert.ok(!mensagens.some((m) => m.includes('acima do teto')));
+  assert.ok(!canal.mensagens.some(([, texto]) => texto.includes('acima do teto')));
 });
 
 test('ensure constroi no maximo uma vez por execucao', async () => {
@@ -463,4 +545,319 @@ test('context-pack-prompt exporta apenas constantes do tipo string', () => {
   assert.ok(valores.every((v) => typeof v === 'string'));
   assert.equal(typeof promptModule.CONTEXT_PACK_PROMPT, 'string');
   assert.equal(typeof promptModule.CONTEXT_PACK_TEMPLATE, 'string');
+});
+
+// ---------------------------------------------------------------------------
+// task-10: modelo do lote, modelo efetivo, canal unico e espera na construcao
+// ---------------------------------------------------------------------------
+
+test('a construcao usa o modelo e o esforco do LOTE, e o registro preserva os nomes de campo', async () => {
+  await escreverFontes();
+  const { adapter, estado } = makeAdapter({
+    resultado: baseResult({ modelosReportados: 'claude-opus-4-6' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+
+  await svc.ensure(
+    makeContexto({ opcoes: { ...makeContexto().opcoes, model: 'opus', effort: 'high' } })
+  );
+
+  // RF-012: o par chega ao adapter pelos NOMES vigentes de BuildContextPackArgsInput.
+  assert.deepEqual(estado.entradas, [{ packModel: 'opus', packEffort: 'high' }]);
+
+  const ev = eventos.find((e) => e.event === 'pack_build');
+  assert.ok(ev);
+  assert.equal(ev.pack_model, 'opus');
+  assert.equal(ev.pack_effort, 'high');
+});
+
+test('a regra de divergencia nao dispara quando o reportado contem o solicitado', async () => {
+  await escreverFontes();
+  const { adapter } = makeAdapter({
+    resultado: baseResult({ modelosReportados: 'claude-opus-4-6' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(
+    makeContexto({
+      onMensagem: canal.onMensagem,
+      opcoes: { ...makeContexto().opcoes, model: 'opus', effort: 'high' },
+    })
+  );
+
+  assert.ok(!canal.mensagens.some(([kind]) => kind === 'aviso'));
+  const ev = eventos.find((e) => e.event === 'pack_build');
+  assert.ok(ev);
+  assert.equal(ev.pack_model_divergente, false);
+  assert.equal(ev.pack_model_efetivo, 'claude-opus-4-6');
+});
+
+test('a linha de conclusao traz o modelo efetivo, os bytes e a duracao formatada', async () => {
+  await escreverFontes();
+  const { adapter } = makeAdapter({
+    tamanhoArquivo: 12480,
+    resultado: baseResult({ modelosReportados: 'claude-opus-4-6' }),
+  });
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    null,
+    makeRelogio(64_000) as never
+  );
+  const canal = makeCanal();
+
+  await svc.ensure(
+    makeContexto({
+      onMensagem: canal.onMensagem,
+      opcoes: { ...makeContexto().opcoes, model: 'opus', packMaxTokens: 0 },
+    })
+  );
+
+  assert.ok(
+    canal.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'ok' &&
+        texto === 'Contexto de Execucao construido em claude-opus-4-6 - 12.480 bytes - 1m 04s'
+    )
+  );
+});
+
+test('destilado reaproveitado publica so a mensagem de reaproveitamento pelo canal unico', async () => {
+  await escreverFontes();
+  await escreverDestilado(BASE_MS + 10_000);
+  const { adapter, estado } = makeAdapter();
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  const r = await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+
+  assert.equal(r.decisao, 'reaproveitado');
+  assert.equal(estado.chamadas, 0);
+  assert.deepEqual(canal.mensagens, [
+    ['info', 'Contexto de Execucao em dia - reaproveitando o destilado existente'],
+  ]);
+  // Nenhuma linha de conclusao e nenhum pack_model_efetivo no reaproveitamento.
+  assert.ok(!eventos.some((e) => e.event === 'pack_build'));
+});
+
+test('espera bem-sucedida durante a construcao refaz a construcao e o lote prossegue', async () => {
+  await escreverFontes();
+  const { adapter, estado } = makeAdapter({
+    rateLimit: true,
+    naoEscreveNasChamadas: [1],
+    resultados: [
+      baseResult({ isError: true, exitCode: 1, rawStdout: 'usage limit reached' }),
+      baseResult({ modelosReportados: 'claude-sonnet-4-5' }),
+    ],
+  });
+  const { logger, eventos } = makeLogger();
+  const { espera, entradas } = makeEspera([{ retomar: true }]);
+  const svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    espera as never,
+    makeRelogio(1000) as never
+  );
+
+  const r = await svc.ensure(makeContexto({ opcoes: { ...makeContexto().opcoes, packMaxTokens: 0 } }));
+
+  assert.equal(r.decisao, 'construido');
+  assert.equal(estado.chamadas, 2);
+  assert.equal(entradas.length, 1);
+  assert.equal(entradas[0].contexto, 'context_pack');
+  assert.equal(entradas[0].task, null);
+  assert.equal(entradas[0].tentativa, 1);
+  const rl = eventos.find((e) => e.event === 'rate_limited');
+  assert.ok(rl);
+  assert.equal(rl.contexto, 'context_pack');
+});
+
+test('divergencia COM a capacidade emite o aviso nomeando reportado e solicitado', async () => {
+  await escreverFontes();
+  const { adapter } = makeAdapter({
+    relatoDeModeloEfetivo: true,
+    resultado: baseResult({ modelosReportados: 'claude-sonnet-4-5' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(
+    makeContexto({
+      onMensagem: canal.onMensagem,
+      opcoes: { ...makeContexto().opcoes, model: 'opus', packMaxTokens: 0 },
+    })
+  );
+
+  assert.ok(
+    canal.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' &&
+        texto === 'Contexto de Execucao construido em claude-sonnet-4-5, e não em opus'
+    )
+  );
+  const ev = eventos.find((e) => e.event === 'pack_build');
+  assert.ok(ev);
+  assert.equal(ev.pack_model_divergente, true);
+  assert.equal(ev.pack_model_efetivo, 'claude-sonnet-4-5');
+});
+
+test('divergencia SEM a capacidade nao emite aviso, mas grava pack_model_efetivo assim mesmo', async () => {
+  await escreverFontes();
+  const { adapter } = makeAdapter({
+    relatoDeModeloEfetivo: false,
+    resultado: baseResult({ modelosReportados: 'claude-sonnet-4-5' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(
+    makeContexto({
+      onMensagem: canal.onMensagem,
+      opcoes: { ...makeContexto().opcoes, model: 'opus', packMaxTokens: 0 },
+    })
+  );
+
+  assert.ok(!canal.mensagens.some(([kind]) => kind === 'aviso'));
+  // CT-047: a capacidade governa o aviso, nunca a gravacao do campo.
+  const ev = eventos.find((e) => e.event === 'pack_build');
+  assert.ok(ev);
+  assert.equal(ev.pack_model_efetivo, 'claude-sonnet-4-5');
+  // Sem relato confiavel a linha apresenta o SOLICITADO, identificado como tal.
+  assert.ok(
+    canal.mensagens.some(
+      ([kind, texto]) => kind === 'ok' && texto.includes('em opus (solicitado) - ')
+    )
+  );
+});
+
+test('espera esgotada na construcao devolve falhou/limite_de_uso e nao reaproveita destilado desatualizado', async () => {
+  await escreverFontes();
+  // Destilado antigo presente e DESATUALIZADO: techspec.md e mais recente.
+  const antigo = await escreverDestilado(BASE_MS - 10_000, 'destilado velho');
+  const { adapter, estado } = makeAdapter({
+    rateLimit: true,
+    escreveArquivo: false,
+    resultado: baseResult({ isError: true, exitCode: 1, rawStdout: 'usage limit reached' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const { espera, entradas } = makeEspera([
+    { retomar: false, motivo: 'teto de espera de 6h esgotado sem renovacao da cota' },
+  ]);
+  const svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    espera as never,
+    makeRelogio(1000) as never
+  );
+  const canal = makeCanal();
+
+  const r = await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+
+  assert.equal(r.decisao, 'falhou');
+  assert.equal(r.motivo, 'limite_de_uso');
+  // RF-021: sem destilado. `caminhoParaInjecao` recusa o destilado desatualizado.
+  assert.equal(r.caminho, null);
+  assert.equal(svc.caminhoParaInjecao(r), null);
+  assert.equal(await fs.readFile(antigo, 'utf8'), 'destilado velho');
+  assert.equal(estado.chamadas, 1);
+  assert.equal(entradas.length, 1);
+  assert.ok(
+    canal.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' &&
+        texto === 'teto de espera de 6h esgotado sem renovacao da cota - encerrando o lote'
+    )
+  );
+  // A tentativa barrada nao produz pack_build nem pack_build_failed.
+  assert.ok(!eventos.some((e) => e.event === 'pack_build'));
+  assert.ok(!eventos.some((e) => e.event === 'pack_build_failed'));
+});
+
+test('sucesso que menciona limite de uso no texto nao dispara espera', async () => {
+  await escreverFontes();
+  const { adapter, estado } = makeAdapter({
+    rateLimit: true,
+    resultado: baseResult({ rawStderr: 'aviso: usage limit perto do fim' }),
+  });
+  const { logger } = makeLogger();
+  const { espera, entradas } = makeEspera([{ retomar: true }]);
+  const svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    espera as never,
+    makeRelogio(1000) as never
+  );
+
+  const r = await svc.ensure(makeContexto({ opcoes: { ...makeContexto().opcoes, packMaxTokens: 0 } }));
+
+  assert.equal(r.decisao, 'construido');
+  assert.equal(estado.chamadas, 1);
+  assert.equal(entradas.length, 0);
+});
+
+test('a mensagem de reaproveitamento encerra o indicador antes de escrever e respeita o layout', async () => {
+  await escreverFontes();
+  await escreverDestilado(BASE_MS + 10_000);
+  const { adapter } = makeAdapter();
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+
+  const writes: string[] = [];
+  const stream = {
+    isTTY: true,
+    write(texto: string): boolean {
+      writes.push(String(texto));
+      return true;
+    },
+  };
+  const contexto: LayoutContext = {
+    painter: createPainter(LEVEL.NONE),
+    glyphLevel: GLYPH.ASCII,
+    isTTY: true,
+    largura: 100,
+    stream: stream as unknown as NodeJS.WritableStream,
+    estiloCabecalho: 'painel',
+  };
+  const layout = createLayout('coluna', contexto);
+
+  // Indicador ativo: e o caso em que a escrita direta se sobreporia a ele.
+  layout.taskStart({
+    arquivo: 'task-1.md',
+    numero: 1,
+    posicao: 1,
+    total: 1,
+    model: 'sonnet',
+    effort: 'low',
+    usouContextoExecucao: false,
+  });
+  const antes = writes.length;
+
+  await svc.ensure(makeContexto({ onMensagem: (k: StatusKind, t: string) => layout.message(k, t) }));
+  layout.dispose();
+
+  const publicadas = writes.slice(antes);
+  const linha = publicadas.find((w) => w.includes('reaproveitando o destilado existente'));
+  assert.ok(linha, 'a mensagem foi escrita pela camada de apresentacao');
+  // RF-003: o rotulo e montado pela apresentacao, nao pelo servico.
+  assert.match(linha, /\[INFO\]/);
+  // O indicador foi encerrado ANTES da escrita: a linha da mensagem nao carrega
+  // resto de quadro do indicador, e a sequencia de limpeza a precede.
+  const indice = publicadas.indexOf(linha);
+  assert.ok(
+    publicadas.slice(0, indice).some((w) => w.includes('\x1b[2K') || w.includes('\r')),
+    'o indicador e limpo antes da escrita'
+  );
+  assert.equal(linha.startsWith('\r'), false);
+  assert.match(linha, /^\[INFO\]/);
 });

@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   montarAdapter,
   prepararArquivoDeApoio,
 } from '../dist/utils/executar-tasks-wiring.js';
 import { OpenCodeExecutorConfigService } from '../dist/utils/opencode-executor-config.js';
+
+const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function homeTemporario(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'specifica-wiring-'));
@@ -176,4 +180,65 @@ test('a instancia usada e a informada pelo seam, nunca uma criada por dentro', a
   assert.equal(servico, informada);
 
   await fs.remove(home);
+});
+
+const CAMPOS_DE_DADOS_DE_ABERTURA = [
+  'feature',
+  'tasksSelecionadas',
+  'tasksTotal',
+  'criterioDeSelecao',
+  'ferramenta',
+  'executavel',
+  'versao',
+  'model',
+  'effort',
+  'fallbackModel',
+  'permissoes',
+  'contextoLigado',
+  'contextoSimulado',
+  'contextoTeto',
+  'contextoInjecao',
+  'cacheTuning',
+  'dirsExtras',
+  'tetoCustoPorTask',
+  'tetoJanela',
+  'tetoEspera',
+  'registroPath',
+];
+
+test('o comando monta DadosDeAbertura com todos os campos da secao 3.1 (CT-046, RF-005)', () => {
+  const fonte = readFileSync(
+    path.join(raiz, 'src', 'commands', 'executar-tasks.ts'),
+    'utf-8'
+  );
+
+  const abertura = fonte.indexOf('layout.header({');
+  assert.notEqual(abertura, -1, 'o comando deveria chamar layout.header com dados');
+  const trecho = fonte.slice(abertura, fonte.indexOf('});', abertura));
+
+  for (const campo of CAMPOS_DE_DADOS_DE_ABERTURA) {
+    const preenchido = trecho.includes(`${campo}:`) || trecho.includes(`${campo},`);
+    assert.ok(preenchido, `DadosDeAbertura deveria preencher ${campo}`);
+  }
+});
+
+test('nenhuma string de cabecalho e montada dentro do comando (RF-005)', () => {
+  const fonte = readFileSync(
+    path.join(raiz, 'src', 'commands', 'executar-tasks.ts'),
+    'utf-8'
+  );
+
+  assert.ok(
+    !fonte.includes("from '../utils/cabecalho"),
+    'o comando nao deveria importar a familia do cabecalho'
+  );
+  assert.ok(!fonte.includes('renderCabecalho'), 'renderCabecalho nao pertence ao comando');
+
+  const caracteresDeMoldura = ['═', '─', '│', '┌', '┐', '└', '┘', '├', '┤', '╭', '╮', '╯', '╰'];
+  for (const caractere of caracteresDeMoldura) {
+    assert.ok(
+      !fonte.includes(caractere),
+      `o comando nao deveria conter o caractere de moldura ${caractere}`
+    );
+  }
 });

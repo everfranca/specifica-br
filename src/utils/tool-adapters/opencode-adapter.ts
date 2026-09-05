@@ -43,6 +43,7 @@ const CAPACIDADES_OPENCODE: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: false,
   relatoDeNegacoesDePermissao: false,
   formaDeInjecaoSelecionavel: true,
+  relatoDeModeloEfetivo: false,
 };
 
 /**
@@ -153,7 +154,7 @@ export class OpenCodeAdapter implements ToolAdapter {
    * @param configService Ciclo de vida do arquivo de apoio de CT-035, de onde sai
    *   o caminho absoluto exportado em `OPENCODE_CONFIG`.
    * @param onAviso Canal por onde o adapter emite os avisos nominais de RF-007 e
-   *   RF-009, sem prefixo: quem imprime `[ AVIS]` e a camada de saida.
+   *   RF-009, sem prefixo: quem imprime o rotulo de aviso e a camada de saida.
    */
   constructor(
     private readonly runner: ProcessRunner = processRunner,

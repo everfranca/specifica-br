@@ -70,7 +70,7 @@ class ProcessRunner {
    * @param comando Nome do executavel ou caminho ja contendo separador.
    * @param env Ambiente de onde ler `PATH`/`PATHEXT`. Default: `process.env`.
    * @returns Caminho absoluto do executavel, ou `null` quando nao resolvido.
-   *   Nunca lanca: quem transforma ausencia em `[ ERRO]` e o preflight (task-7).
+   *   Nunca lanca: quem transforma ausencia em erro e o preflight (task-7).
    */
   public async which(comando: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
     if (comando.includes('/') || (this.isWindows && comando.includes('\\'))) {

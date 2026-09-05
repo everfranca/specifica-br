@@ -13,15 +13,16 @@ import {
   status,
 } from '../utils/terminal/index.js';
 import type { Painter } from '../utils/terminal/index.js';
-import { buildPreview } from '../utils/layout-preview.js';
+import { buildPreview, buildHeaderPreview } from '../utils/layout-preview.js';
 import {
   validateChave,
   validateLayoutValor,
+  validateCabecalhoValor,
   validateFerramentaValor,
 } from '../utils/config-command-validation.js';
 import { shortenPath } from '../utils/path-resolver.js';
-import { LAYOUT_NAMES, DEFAULT_LAYOUT } from '../types/config.js';
-import type { LayoutName, ToolSlug } from '../types/config.js';
+import { LAYOUT_NAMES, DEFAULT_LAYOUT, HEADER_STYLE_NAMES } from '../types/config.js';
+import type { HeaderStyle, LayoutName, ToolSlug } from '../types/config.js';
 
 /**
  * Parametros passados a selecao interativa do layout. `initial` e o INDICE da
@@ -30,6 +31,16 @@ import type { LayoutName, ToolSlug } from '../types/config.js';
  */
 export interface SelectLayoutParams {
   choices: Array<{ title: string; value: LayoutName }>;
+  initial: number;
+  optionsPerPage: number;
+}
+
+/**
+ * Parametros da segunda selecao interativa, a do estilo de cabecalho. Mesma
+ * regra de `initial` da selecao de layout: e o INDICE dentro de `choices`.
+ */
+export interface SelectHeaderStyleParams {
+  choices: Array<{ title: string; value: HeaderStyle }>;
   initial: number;
   optionsPerPage: number;
 }
@@ -44,6 +55,7 @@ export interface ConfigIO {
   writeErr(texto: string): void;
   isTTY: boolean;
   selectLayout(params: SelectLayoutParams): Promise<LayoutName | undefined>;
+  selectHeaderStyle(params: SelectHeaderStyleParams): Promise<HeaderStyle | undefined>;
 }
 
 export interface ConfigDeps {
@@ -55,14 +67,17 @@ export interface ConfigDeps {
 const LARGURA_PREVIEW = 72;
 
 /**
- * Bloco literal de CT-002: as quatro linhas Arquivo, Layout, Projeto e
- * Ferramenta, sempre exibidas antes de qualquer gravacao ou selecao.
+ * Bloco literal de CT-041: as cinco linhas Arquivo, Layout, Cabecalho, Projeto e
+ * Ferramenta, sempre exibidas antes de qualquer gravacao ou selecao. `Cabecalho`
+ * entra entre `Layout` e `Projeto`, e os valores continuam alinhados na mesma
+ * coluna 17 das demais linhas.
  */
 function exibirConfigVigente(
   io: ConfigIO,
   painter: Painter,
   configPath: string,
   layout: LayoutName,
+  cabecalho: HeaderStyle,
   projeto: string,
   ferramenta: ToolSlug | undefined
 ): void {
@@ -74,6 +89,7 @@ function exibirConfigVigente(
   io.write('\n');
   io.write(`  Arquivo        ${shortenPath(configPath)}\n`);
   io.write(`  Layout         ${layout}\n`);
+  io.write(`  Cabecalho      ${cabecalho}\n`);
   io.write(`  Projeto        ${projeto}\n`);
   io.write(`  Ferramenta     ${ferramentaTexto}\n`);
 }
@@ -102,6 +118,9 @@ export async function runConfig(
 
   const identidade = await identityService.resolve();
   const layoutAtual = config.layout ?? DEFAULT_LAYOUT;
+  // `load()` ja resolve `cabecalho` para o padrao quando ausente ou invalido
+  // (CT-042): esta camada nao revalida o arquivo.
+  const cabecalhoAtual = config.cabecalho;
   const ferramentaAtual = config.projetos?.[identidade.nome]?.ferramenta;
 
   exibirConfigVigente(
@@ -109,6 +128,7 @@ export async function runConfig(
     painter,
     configService.configPath,
     layoutAtual,
+    cabecalhoAtual,
     identidade.nome,
     ferramentaAtual
   );
@@ -133,6 +153,10 @@ export async function runConfig(
         const layout = validateLayoutValor(valor);
         await configService.setLayout(layout);
         io.write(`${status('ok', `layout definido como ${layout}`, painter)}\n`);
+      } else if (chaveValida === 'cabecalho') {
+        const estilo = validateCabecalhoValor(valor);
+        await configService.setHeaderStyle(estilo);
+        io.write(`${status('ok', `cabecalho definido como ${estilo}`, painter)}\n`);
       } else {
         const slug = validateFerramentaValor(valor);
         await configService.setProjectTool(identidade.nome, slug);
@@ -162,11 +186,15 @@ export async function runConfig(
   const glyphLevel = detectGlyphLevel();
   io.write('\n');
 
+  const base = { painter, glyphLevel, largura: LARGURA_PREVIEW };
+  const indentar = (linhas: string[]): string =>
+    linhas.map((linha) => `    ${linha}`).join('\n');
+
   const choices = LAYOUT_NAMES.map((nome) => {
     const marca = nome === layoutAtual ? ' (atual)' : '';
-    const preview = buildPreview(nome, { painter, glyphLevel, largura: LARGURA_PREVIEW })
-      .map((linha) => `    ${linha}`)
-      .join('\n');
+    // Cada opcao de layout mostra o cabecalho no estilo HOJE configurado,
+    // seguido das linhas de task daquele layout (RF-007).
+    const preview = indentar(buildPreview(nome, { ...base, cabecalho: cabecalhoAtual }));
     return { title: `${nome}${marca}\n${preview}`, value: nome };
   });
 
@@ -183,6 +211,31 @@ export async function runConfig(
 
   await configService.setLayout(escolha);
   io.write(`${status('ok', `layout definido como ${escolha}`, painter)}\n`);
+
+  // Segunda selecao: o estilo do cabecalho. Cada opcao mostra APENAS o
+  // cabecalho naquela forma, com o mesmo `DadosDeAbertura` de exemplo.
+  io.write('\n');
+
+  const choicesCabecalho = HEADER_STYLE_NAMES.map((nome) => {
+    const marca = nome === cabecalhoAtual ? ' (atual)' : '';
+    const preview = indentar(buildHeaderPreview(nome, base));
+    return { title: `${nome}${marca}\n${preview}`, value: nome };
+  });
+
+  const escolhaCabecalho = await io.selectHeaderStyle({
+    choices: choicesCabecalho,
+    initial: HEADER_STYLE_NAMES.indexOf(cabecalhoAtual),
+    optionsPerPage: HEADER_STYLE_NAMES.length,
+  });
+
+  if (escolhaCabecalho === undefined) {
+    // Cancelamento da segunda selecao: o layout escolhido na primeira
+    // permanece gravado e o cabecalho nao e alterado (CT-041).
+    return 0;
+  }
+
+  await configService.setHeaderStyle(escolhaCabecalho);
+  io.write(`${status('ok', `cabecalho definido como ${escolhaCabecalho}`, painter)}\n`);
   return 0;
 }
 
@@ -209,6 +262,18 @@ function criarIOPadrao(): ConfigIO {
       const resposta = await prompts(pergunta as unknown as Parameters<typeof prompts>[0]);
       return resposta.layout as LayoutName | undefined;
     },
+    async selectHeaderStyle({ choices, initial, optionsPerPage }) {
+      const pergunta = {
+        type: 'select' as const,
+        name: 'cabecalho' as const,
+        message: 'Escolha o estilo do cabecalho',
+        choices,
+        initial,
+        optionsPerPage,
+      };
+      const resposta = await prompts(pergunta as unknown as Parameters<typeof prompts>[0]);
+      return resposta.cabecalho as HeaderStyle | undefined;
+    },
   };
 }
 
@@ -230,13 +295,16 @@ async function acaoEnvolvida(
 }
 
 /**
- * Subcomando `config` (CT-002, RF-016). Dois argumentos posicionais opcionais:
- * sem eles, exibe a configuracao vigente e abre a selecao de layout com
- * pre-visualizacao dos quatro; com eles, grava layout ou ferramenta sem
+ * Subcomando `config` (CT-002, CT-041, RF-016, RF-007). Dois argumentos
+ * posicionais opcionais: sem eles, exibe a configuracao vigente e abre a
+ * selecao de layout e, em seguida, a de cabecalho, ambas com
+ * pre-visualizacao; com eles, grava layout, cabecalho ou ferramenta sem
  * interacao.
  */
 export const configCommand = new Command('config')
-  .description('Exibe e altera o layout (por maquina) e a ferramenta de IA (por projeto)')
-  .argument('[chave]', 'layout ou ferramenta')
+  .description(
+    'Exibe e altera o layout e o cabecalho (por maquina) e a ferramenta de IA (por projeto)'
+  )
+  .argument('[chave]', 'layout, cabecalho ou ferramenta')
   .argument('[valor]', 'valor a gravar')
   .action(acaoEnvolvida);

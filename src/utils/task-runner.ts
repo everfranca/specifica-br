@@ -1,7 +1,9 @@
 import fs from 'fs-extra';
 import type {
   ExecutarTasksOptions,
+  OrigemHorario,
   PackResult,
+  Relogio,
   RunEndMotivo,
   RunEvent,
   RunEventEnd,
@@ -17,8 +19,11 @@ import type { StatusKind } from './terminal/index.js';
 import type { LayoutRenderer } from './layouts/types.js';
 import type { AccountingService } from './accounting.js';
 import type { ContextPackContexto } from './context-pack-service.js';
+import type { EntradaDeEspera, ResultadoDeEspera } from './espera-limite.js';
 import { STATUS_DONE_PATTERN } from './task-discovery-patterns.js';
 import { getExecutavel } from './tool-adapters/tool-registry.js';
+import { determinarRenovacao } from './renovacao-de-cota.js';
+import { formatarDuracao } from './formatos.js';
 
 /** Identificador da task sem a extensao `.md`, para as mensagens ao usuario. */
 function idDaTask(arquivo: string): string {
@@ -80,7 +85,7 @@ function resumirArgs(args: string[], conteudo: string | null): string[] {
 
 /**
  * Recusa, sem abortar, as opcoes que dependem de uma capacidade que a ferramenta
- * nao tem (RF-012). Cada recusa vira um `[ AVIS]` nominal e a funcionalidade e
+ * nao tem (RF-012). Cada recusa vira um aviso nominal e a funcionalidade e
  * desligada. Como so `claudecode` tem contrato validado nesta versao, na pratica
  * nenhuma capacidade falta; a funcao existe para o dia em que outra ferramenta
  * entrar com um contrato parcial.
@@ -207,12 +212,25 @@ export interface RunnerExecutorConfig {
   remover(): Promise<void>;
 }
 
+/**
+ * Subconjunto do `EsperaPorLimiteDeUso` (task-8) consumido pelo loop (CT-048).
+ * A instancia e a MESMA injetada no `ContextPackService`: e o que faz o teto de
+ * `--max-wait` valer para o lote inteiro.
+ */
+export interface RunnerEsperaPorLimite {
+  readonly acumuladoSegundos: number;
+  aguardar(entrada: EntradaDeEspera): Promise<ResultadoDeEspera>;
+}
+
 export interface TaskRunnerDeps {
   adapter: RunnerToolAdapter;
   contextPack: RunnerContextPack;
   accounting: AccountingService;
   logger: RunnerLogger;
   layout: LayoutRenderer;
+  espera: RunnerEsperaPorLimite;
+  /** Porta de tempo (CT-048): nos testes um relogio falso substitui o do sistema. */
+  relogio: Relogio;
   opcoes: ExecutarTasksOptions;
   ferramenta: ToolSlug;
   featureDir: string;
@@ -229,6 +247,12 @@ export interface TaskRunnerDeps {
 
 interface Evidencia {
   task: string;
+  /**
+   * Tempo da tentativa que produziu o evento `end` - a que efetivamente
+   * executou (RF-010). O tempo das tentativas barradas e o tempo em espera
+   * entram apenas em `Tempo total` e em `Tempo em espera`.
+   */
+  wallSeconds: number;
   sessionId: string;
   tokens: number;
   turnos: number;
@@ -246,6 +270,15 @@ interface Evidencia {
  * - uma task DONE nunca e executada (RF-004);
  * - o resumo final e emitido em todos os encerramentos, como texto normal (RF-017).
  */
+/**
+ * Desfecho de UMA tentativa de execucao de task. O tipo discriminado e o que
+ * torna impossivel contar uma tentativa barrada como executada (RF-017): so o
+ * ramo `concluida` percorre contadores, evidencia e evento `end`.
+ */
+type DesfechoDaTentativa =
+  | { kind: 'concluida'; motivo: RunEndMotivo | null }
+  | { kind: 'barrada'; textoBruto: string };
+
 export class TaskRunner {
   private encerrado = false;
   private resumoEmitido = false;
@@ -260,9 +293,12 @@ export class TaskRunner {
   private packEntregue = false;
   /** Cancelamento do filho da task corrente (RF-024, caso extremo 24). */
   private readonly cancelamento = new AbortController();
+  /** Marco do inicio do lote, para `Tempo total` do resumo e do `run_end` (RF-010). */
+  private readonly inicioDoLote: number;
 
   constructor(private readonly deps: TaskRunnerDeps) {
     this.packPath = deps.packPathInicial;
+    this.inicioDoLote = deps.relogio.agora();
   }
 
   /**
@@ -286,7 +322,7 @@ export class TaskRunner {
    * - OpenCode/`prompt`: o conteudo e lido uma vez e concatenado ao posicional.
    *
    * Falha de leitura ou de reescrita degrada para lote sem destilado, com
-   * `[ AVIS]`, e nunca aborta.
+   * aviso, e nunca aborta.
    */
   private async entregarDestilado(): Promise<void> {
     if (this.packEntregue) {
@@ -387,54 +423,6 @@ export class TaskRunner {
         }
       }
 
-      // c. Trava da janela ANTES de iniciar a task (RF-008).
-      if (
-        this.deps.windowBudgetTokens > 0 &&
-        this.deps.accounting.excederiaJanela(this.deps.windowBudgetTokens)
-      ) {
-        await this.deps.logger.logEvent({
-          event: 'budget_exhausted',
-          ts: '',
-          tipo: 'janela',
-          proxima_task: task.arquivo,
-          tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
-          window_budget_tokens: this.deps.windowBudgetTokens,
-          custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
-          max_budget_usd: this.deps.opcoes.maxBudgetUsd,
-        });
-        this.deps.layout.message(
-          'aviso',
-          `orcamento da janela esgotado antes de ${idDaTask(task.arquivo)}`
-        );
-        return 'orcamento_da_janela';
-      }
-
-      // c. Trava de custo ANTES de iniciar a task (RF-008, passo 12c). Vale para
-      // toda ferramenta que reporte custo, inclusive as que ja tem teto nativo:
-      // ali ela e rede de seguranca e so se manifesta quando o teto e de fato
-      // ultrapassado, deixando intacta a execucao que nao o atinge.
-      if (
-        this.deps.opcoes.maxBudgetUsd > 0 &&
-        this.deps.adapter.capacidades.relatoDeCustoEmUSD &&
-        this.deps.accounting.total.custoAcumuladoUsd >= this.deps.opcoes.maxBudgetUsd
-      ) {
-        await this.deps.logger.logEvent({
-          event: 'budget_exhausted',
-          ts: '',
-          tipo: 'custo',
-          proxima_task: task.arquivo,
-          tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
-          window_budget_tokens: this.deps.windowBudgetTokens,
-          custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
-          max_budget_usd: this.deps.opcoes.maxBudgetUsd,
-        });
-        this.deps.layout.message(
-          'aviso',
-          `teto de custo ultrapassado antes de ${idDaTask(task.arquivo)}`
-        );
-        return 'orcamento_de_custo';
-      }
-
       const motivo = await this.executarTask(task, posicao, total);
       if (motivo) {
         return motivo;
@@ -448,11 +436,136 @@ export class TaskRunner {
     return 'fim_da_lista';
   }
 
+  /**
+   * Trava da janela ANTES de iniciar a tentativa (RF-008), medida contra a linha
+   * de base da janela (RF-019). Devolve o motivo de encerramento, ou `null`.
+   */
+  private async travaDaJanela(task: TaskInfo): Promise<RunEndMotivo | null> {
+    if (
+      this.deps.windowBudgetTokens <= 0 ||
+      !this.deps.accounting.excederiaJanela(this.deps.windowBudgetTokens)
+    ) {
+      return null;
+    }
+    await this.deps.logger.logEvent({
+      event: 'budget_exhausted',
+      ts: '',
+      tipo: 'janela',
+      proxima_task: task.arquivo,
+      tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
+      window_budget_tokens: this.deps.windowBudgetTokens,
+      custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
+      max_budget_usd: this.deps.opcoes.maxBudgetUsd,
+    });
+    this.deps.layout.message(
+      'aviso',
+      `orcamento da janela esgotado antes de ${idDaTask(task.arquivo)}`
+    );
+    return 'orcamento_da_janela';
+  }
+
+  /**
+   * Trava de custo ANTES de iniciar a tentativa (RF-008, passo 12c, inalterada).
+   * Vale para toda ferramenta que reporte custo, inclusive as que ja tem teto
+   * nativo: ali ela e rede de seguranca e so se manifesta quando o teto e de
+   * fato ultrapassado, deixando intacta a execucao que nao o atinge.
+   */
+  private async travaDeCusto(task: TaskInfo): Promise<RunEndMotivo | null> {
+    if (
+      this.deps.opcoes.maxBudgetUsd <= 0 ||
+      !this.deps.adapter.capacidades.relatoDeCustoEmUSD ||
+      this.deps.accounting.total.custoAcumuladoUsd < this.deps.opcoes.maxBudgetUsd
+    ) {
+      return null;
+    }
+    await this.deps.logger.logEvent({
+      event: 'budget_exhausted',
+      ts: '',
+      tipo: 'custo',
+      proxima_task: task.arquivo,
+      tokens_gastos_acumulado: this.deps.accounting.total.tokensGastosAcumulado,
+      window_budget_tokens: this.deps.windowBudgetTokens,
+      custo_acumulado_usd: this.deps.accounting.total.custoAcumuladoUsd,
+      max_budget_usd: this.deps.opcoes.maxBudgetUsd,
+    });
+    this.deps.layout.message(
+      'aviso',
+      `teto de custo ultrapassado antes de ${idDaTask(task.arquivo)}`
+    );
+    return 'orcamento_de_custo';
+  }
+
+  /**
+   * Passo 4 da secao 5.1: laco de tentativa e espera de uma unica task. A
+   * tentativa barrada por limite de uso nao encerra o lote (RF-016): delega a
+   * decisao ao `EsperaPorLimiteDeUso` e, na retomada, reexecuta a MESMA task do
+   * inicio (RF-018), com a janela renovada (RF-019).
+   */
   private async executarTask(
     task: TaskInfo,
     posicao: number,
     total: number
   ): Promise<RunEndMotivo | null> {
+    let tentativa = 1;
+
+    for (;;) {
+      // a. e b. Travas de janela e de custo ANTES de iniciar cada tentativa.
+      const janela = await this.travaDaJanela(task);
+      if (janela) {
+        return janela;
+      }
+      const custo = await this.travaDeCusto(task);
+      if (custo) {
+        return custo;
+      }
+
+      const desfecho = await this.tentarTask(task, posicao, total, tentativa);
+      if (desfecho.kind === 'concluida') {
+        return desfecho.motivo;
+      }
+
+      const decisao = await this.deps.espera.aguardar({
+        textoBruto: desfecho.textoBruto,
+        contexto: 'task',
+        task: task.arquivo,
+        posicao,
+        total,
+        tentativa,
+        signal: this.cancelamento.signal,
+      });
+
+      // A interrupcao durante a espera segue o caminho de encerramento por
+      // interrupcao ja existente (RF-024): o resumo parcial e o `run_end` sao
+      // gravados por `encerrar`, chamado pelo comando.
+      if (this.encerrado) {
+        return 'interrompido_pelo_usuario';
+      }
+
+      if (!decisao.retomar) {
+        this.deps.layout.message(
+          'aviso',
+          `${decisao.motivoDaDesistencia ?? 'limite de uso'} - encerrando o lote`
+        );
+        return 'limite_de_uso';
+      }
+
+      // RF-019: a espera bem-sucedida significa que a janela do provedor
+      // renovou. Os totais do resumo nao sao tocados (D7).
+      this.deps.accounting.renovarJanelaDeExecucao();
+      tentativa += 1;
+    }
+  }
+
+  /**
+   * Uma unica tentativa de execucao. Devolve `barrada` quando, e somente quando,
+   * a execucao FALHOU e o texto dos dois fluxos anuncia limite de uso (CT-044).
+   */
+  private async tentarTask(
+    task: TaskInfo,
+    posicao: number,
+    total: number,
+    tentativa: number
+  ): Promise<DesfechoDaTentativa> {
     const { adapter, opcoes } = this.deps;
     await this.entregarDestilado();
     // A evidencia acompanha o que de fato foi entregue: na forma `prompt` o que
@@ -463,8 +576,11 @@ export class TaskRunner {
         ? this.packConteudo !== null
         : this.packPath !== null;
     const antes = this.deps.accounting.total.tokensGastosAcumulado;
+    // `tokens_disponiveis_*` usam a MESMA base da trava da janela (RF-019).
     const disponivelAntes =
-      this.deps.windowBudgetTokens > 0 ? this.deps.windowBudgetTokens - antes : null;
+      this.deps.windowBudgetTokens > 0
+        ? this.deps.windowBudgetTokens - this.deps.accounting.tokensDaJanela
+        : null;
 
     await this.deps.logger.logEvent({
       event: 'start',
@@ -487,7 +603,17 @@ export class TaskRunner {
       usouContextoExecucao: usouCtx,
     });
 
-    const inicio = Date.now();
+    // d. RF-018: a reexecucao e integral, do inicio, e a tentativa anterior pode
+    // ter deixado arquivos alterados. O aviso sai pelo canal unico, sem rotulo
+    // literal (RF-003).
+    if (tentativa > 1) {
+      this.deps.layout.message(
+        'aviso',
+        `${idDaTask(task.arquivo)} [${posicao}/${total}]: tentativa ${tentativa} - a tentativa anterior foi interrompida por limite de uso e pode ter deixado trabalho parcial no diretorio`
+      );
+    }
+
+    const inicio = this.deps.relogio.agora();
     const entrada: BuildTaskArgsInput = {
       taskPath: task.caminho,
       opcoes,
@@ -519,10 +645,37 @@ export class TaskRunner {
     // A task morta pela interrupcao nao vira concluida (RF-024): nao entra na
     // contabilidade, nao gera `end` e nao aparece nas evidencias do resumo.
     if (this.encerrado) {
-      return 'interrompido_pelo_usuario';
+      return { kind: 'concluida', motivo: 'interrompido_pelo_usuario' };
     }
 
-    const wallSeconds = Math.round((Date.now() - inicio) / 1000);
+    const wallSeconds = Math.round((this.deps.relogio.agora() - inicio) / 1000);
+
+    // g. Gatilho de CT-044. O conteudo do fluxo de erro NAO classifica a
+    // execucao como falha: CLIs escrevem aviso e diagnostico no `stderr` de
+    // execucoes bem-sucedidas, e usa-lo como criterio reintroduziria o falso
+    // positivo que RF-014 existe para eliminar.
+    const falhou = resultado.isError || resultado.exitCode !== 0;
+    const textoBruto = `${resultado.rawStdout}\n${resultado.rawStderr}`;
+
+    if (falhou && !opcoes.dryRun && adapter.detectRateLimit(textoBruto)) {
+      // RF-017: os tokens gastos SAO contabilizados - foram gastos de fato -,
+      // mas a tentativa nao gera `end`, nao incrementa contador algum, nao
+      // produz evidencia e nao chama `layout.taskEnd`.
+      this.deps.accounting.accumulate(resultado);
+      const renovacao = determinarRenovacao(textoBruto, this.deps.relogio.agora());
+      const origem: OrigemHorario = renovacao === null ? 'sondagem' : 'informado';
+      await this.deps.logger.logEvent({
+        event: 'rate_limited',
+        ts: '',
+        task: task.arquivo,
+        tentativa,
+        renovacao_prevista: renovacao === null ? null : renovacao.toISOString(),
+        origem_horario: origem,
+        contexto: 'task',
+      });
+      return { kind: 'barrada', textoBruto };
+    }
+
     const { tokensDaTask, custoDaTask } = this.deps.accounting.accumulate(resultado);
 
     // RF-018: uma task que terminou sem erro mas ainda nao esta DONE nao esta
@@ -584,7 +737,9 @@ export class TaskRunner {
       tokens_gastos_task: tokensDaTask,
       tokens_gastos_acumulado_depois: depois,
       tokens_disponiveis_depois:
-        this.deps.windowBudgetTokens > 0 ? this.deps.windowBudgetTokens - depois : null,
+        this.deps.windowBudgetTokens > 0
+          ? this.deps.windowBudgetTokens - this.deps.accounting.tokensDaJanela
+          : null,
       custo_task_usd: this.deps.accounting.formatCustoExibicao(custoDaTask),
       custo_acumulado_usd: this.deps.accounting.formatCustoRegistro(
         this.deps.accounting.total.custoAcumuladoUsd
@@ -602,6 +757,7 @@ export class TaskRunner {
 
     this.evidencias.push({
       task: task.arquivo,
+      wallSeconds,
       sessionId: resultado.sessionId,
       tokens: tokensDaTask,
       turnos: resultado.numTurns,
@@ -633,23 +789,15 @@ export class TaskRunner {
       );
     }
 
-    if (
-      !opcoes.dryRun &&
-      this.deps.adapter.detectRateLimit(`${resultado.rawStdout}\n${resultado.rawStderr}`)
-    ) {
-      await this.deps.logger.logEvent({ event: 'rate_limited', ts: '', task: task.arquivo });
-      this.deps.layout.message('aviso', 'limite de uso atingido - interrompendo o loop');
-      return 'limite_de_uso';
-    }
-
+    // Falha real de task: caminho inalterado, `--stop-on-failure` decide.
     if (resultado.isError) {
       this.deps.layout.message('erro', `${idDaTask(task.arquivo)} terminou com erro`);
       if (opcoes.stopOnFailure) {
-        return 'falha_na_task';
+        return { kind: 'concluida', motivo: 'falha_na_task' };
       }
     }
 
-    return null;
+    return { kind: 'concluida', motivo: null };
   }
 
   /**
@@ -674,7 +822,7 @@ export class TaskRunner {
       tasks_concluidas: this.tasksExecutadas,
       total_tasks: this.deps.totalTasks,
     });
-    // Encerra o indicador antes de escrever: um `[ AVIS]` no meio da animacao
+    // Encerra o indicador antes de escrever: um aviso no meio da animacao
     // seria sobrescrito pelo proximo quadro (RNF-004).
     this.deps.layout.dispose();
     this.deps.layout.message('aviso', 'interrompido pelo usuario');
@@ -704,6 +852,9 @@ export class TaskRunner {
       tasks_com_erro: this.tasksComErro,
       tokens_gastos_total: total.tokensGastosAcumulado,
       custo_total_usd: this.deps.accounting.formatCustoRegistro(total.custoAcumuladoUsd),
+      // Numericas e cruas, em segundos (CT-043, RF-010).
+      tempo_total_segundos: this.tempoTotalSegundos(),
+      tempo_em_espera_segundos: this.deps.espera.acumuladoSegundos,
     });
 
     // Remocao em melhor esforco do arquivo de apoio de execucao (CT-035): ela
@@ -731,12 +882,27 @@ export class TaskRunner {
     await this.deps.logger.close();
   }
 
+  /** Duracao do lote inteiro, do inicio ate o encerramento (RF-010). */
+  private tempoTotalSegundos(): number {
+    return Math.max(0, Math.round((this.deps.relogio.agora() - this.inicioDoLote) / 1000));
+  }
+
   private montarResumo(motivo: RunEndMotivo): string[] {
     const total = this.deps.accounting.total;
+    const emEspera = this.deps.espera.acumuladoSegundos;
     const linhas = [
       '',
       'Resumo da execucao',
       `  Motivo             ${motivo}`,
+      `  Tempo total        ${formatarDuracao(this.tempoTotalSegundos())}`,
+    ];
+
+    // RF-010: a linha de espera aparece se, e somente se, houve espera.
+    if (emEspera > 0) {
+      linhas.push(`  Tempo em espera    ${formatarDuracao(emEspera)}`);
+    }
+
+    linhas.push(
       `  Tasks executadas   ${this.tasksExecutadas}`,
       `  Tasks com erro     ${this.tasksComErro}`,
       `  Tokens totais      ${this.deps.accounting.formatMilhar(total.tokensGastosAcumulado)}`,
@@ -745,8 +911,8 @@ export class TaskRunner {
           ? this.deps.accounting.formatMilhar(total.reasoningTokens)
           : 'nao reportado'
       }`,
-      `  Custo acumulado    $${this.deps.accounting.formatCustoExibicao(total.custoAcumuladoUsd)}`,
-    ];
+      `  Custo acumulado    $${this.deps.accounting.formatCustoExibicao(total.custoAcumuladoUsd)}`
+    );
 
     if (this.deps.windowBudgetTokens > 0) {
       linhas.push(
@@ -762,7 +928,7 @@ export class TaskRunner {
     }
     for (const ev of this.evidencias) {
       linhas.push(
-        `    ${idDaTask(ev.task)}  sessao=${ev.sessionId}  tokens=${ev.tokens}  turnos=${ev.turnos}  neg=${ev.negacoes === null ? 'n/d' : ev.negacoes}  ctx=${ev.usouContexto ? 'sim' : 'nao'}`
+        `    ${idDaTask(ev.task)}  tempo=${formatarDuracao(ev.wallSeconds)}  sessao=${ev.sessionId}  tokens=${ev.tokens}  turnos=${ev.turnos}  neg=${ev.negacoes === null ? 'n/d' : ev.negacoes}  ctx=${ev.usouContexto ? 'sim' : 'nao'}`
       );
     }
 

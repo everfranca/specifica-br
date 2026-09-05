@@ -25,6 +25,7 @@ const CAPACIDADES_LIGADAS: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: true,
   relatoDeNegacoesDePermissao: true,
   formaDeInjecaoSelecionavel: false,
+  relatoDeModeloEfetivo: true,
 };
 
 function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions {
@@ -43,8 +44,8 @@ function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions 
     cacheTuning: true,
     contextPack: true,
     contextInjection: 'prompt',
-    packModel: 'sonnet',
-    packEffort: 'low',
+    maxWait: '6h',
+    waitOnLimit: true,
     packMaxTokens: 8000,
     tasks: '',
     allow: [],
@@ -99,6 +100,9 @@ function fakeLayout() {
     message(kind: string, texto: string) {
       mensagens.push([kind, texto]);
     },
+    waitStart() {},
+    waitUpdate() {},
+    waitEnd() {},
     summary(linhas: string[]) {
       resumo = linhas;
     },
@@ -210,6 +214,62 @@ function fakeAdapter(over: AdapterOver = {}) {
   return { obj, chamadas, entradas };
 }
 
+/**
+ * Relogio falso (CT-048, RNF-006): o tempo so anda quando o teste manda, e
+ * `esperar` resolve na hora avancando o relogio. Nenhum teste aguarda tempo real.
+ */
+function fakeRelogio(inicio = 0) {
+  let agora = inicio;
+  const obj = {
+    agora() {
+      return agora;
+    },
+    async esperar(ms: number) {
+      agora += ms;
+    },
+  };
+  return {
+    obj,
+    avancar(ms: number) {
+      agora += ms;
+    },
+  };
+}
+
+interface DecisaoDeEspera {
+  retomar: boolean;
+  motivoDaDesistencia: string | null;
+}
+
+interface EsperaOver {
+  /** Uma decisao por chamada, na ordem. A ultima vale para as chamadas seguintes. */
+  decisoes?: DecisaoDeEspera[];
+  /** Segundos somados ao acumulado a cada espera. */
+  esperaSegundos?: number;
+  aoAguardar?: () => void;
+}
+
+function fakeEspera(over: EsperaOver = {}) {
+  const chamadas: Array<Record<string, unknown>> = [];
+  let acumulado = 0;
+  const obj = {
+    get acumuladoSegundos() {
+      return acumulado;
+    },
+    async aguardar(entrada: Record<string, unknown>) {
+      chamadas.push(entrada);
+      acumulado += over.esperaSegundos ?? 0;
+      over.aoAguardar?.();
+      const decisoes = over.decisoes ?? [];
+      return (
+        decisoes[chamadas.length - 1] ??
+        decisoes[decisoes.length - 1] ?? { retomar: true, motivoDaDesistencia: null }
+      );
+    },
+  };
+  return { obj, chamadas };
+}
+
 let contadorTmp = 0;
 async function criarTasks(specs: Array<{ numero: number; done: boolean }>): Promise<TaskInfo[]> {
   const dir = path.join(os.tmpdir(), `task-runner-test-${process.pid}-${contadorTmp++}`);
@@ -237,14 +297,19 @@ interface MontarOpcoes {
   } | null;
   packPathInicial?: string | null;
   ferramenta?: 'claudecode' | 'opencode';
+  espera?: ReturnType<typeof fakeEspera>;
+  relogio?: ReturnType<typeof fakeRelogio>;
+  logger?: ReturnType<typeof fakeLogger>;
 }
 
 function montar(m: MontarOpcoes = {}) {
   const layout = fakeLayout();
-  const logger = fakeLogger();
+  const logger = m.logger ?? fakeLogger();
   const adapter = m.adapter ?? fakeAdapter();
   const contextPack = m.contextPack ?? fakeContextPack();
   const accounting = m.accounting ?? new AccountingService();
+  const espera = m.espera ?? fakeEspera();
+  const relogio = m.relogio ?? fakeRelogio();
   const opcs = m.opcoes ?? opcoes();
   const runner = new TaskRunner({
     adapter: adapter.obj as never,
@@ -252,6 +317,8 @@ function montar(m: MontarOpcoes = {}) {
     accounting,
     logger: logger.obj as never,
     layout: layout.obj as never,
+    espera: espera.obj as never,
+    relogio: relogio.obj as never,
     opcoes: opcs,
     ferramenta: m.ferramenta ?? 'claudecode',
     featureDir: '/tmp/feature',
@@ -264,8 +331,8 @@ function montar(m: MontarOpcoes = {}) {
       cwd: '/tmp',
       opcoes: {
         contextPack: opcs.contextPack,
-        packModel: opcs.packModel,
-        packEffort: opcs.packEffort,
+        packModel: opcs.model,
+        packEffort: opcs.effort,
         packMaxTokens: opcs.packMaxTokens,
         cacheTuning: opcs.cacheTuning,
       },
@@ -275,7 +342,7 @@ function montar(m: MontarOpcoes = {}) {
     totalTasks: m.totalTasks ?? 0,
     executorConfig: m.executorConfig ?? null,
   });
-  return { runner, layout, logger, adapter, contextPack, accounting };
+  return { runner, layout, logger, adapter, contextPack, accounting, espera, relogio };
 }
 
 function eventos(logger: ReturnType<typeof fakeLogger>, tipo: string) {
@@ -334,15 +401,23 @@ test('a trava da janela interrompe ANTES de iniciar a proxima task', async () =>
   assert.equal(eventos(logger, 'end').length, 1);
 });
 
-test('limite de uso encerra o lote imediatamente', async () => {
+test('limite de uso em task que falhou encerra o lote quando a espera desiste', async () => {
   const tasks = await criarTasks([
     { numero: 1, done: false },
     { numero: 2, done: false },
     { numero: 3, done: false },
     { numero: 4, done: false },
   ]);
-  const adapter = fakeAdapter({ detectRateLimit: () => true });
-  const { runner, logger } = montar({ adapter });
+  const adapter = fakeAdapter({
+    detectRateLimit: () => true,
+    async runTask() {
+      return resultado({ isError: true, exitCode: 1, rawStderr: 'usage limit reached' });
+    },
+  });
+  const espera = fakeEspera({
+    decisoes: [{ retomar: false, motivoDaDesistencia: 'teto de espera esgotado' }],
+  });
+  const { runner, logger } = montar({ adapter, espera });
   const motivo = await runner.run(tasks);
   assert.equal(motivo, 'limite_de_uso');
   assert.equal(adapter.chamadas.runTask, 1);
@@ -753,14 +828,15 @@ test('o resumo final do TaskRunner com ClaudeCode congela linha a linha', async 
     '',
     'Resumo da execucao',
     '  Motivo             fim_da_lista',
+    '  Tempo total        0s',
     '  Tasks executadas   2',
     '  Tasks com erro     0',
     '  Tokens totais      2.400',
     '  Raciocinio         nao reportado',
     '  Custo acumulado    $0.0000',
     '  Evidencias:',
-    '    task-1  sessao=sess-1  tokens=1200  turnos=3  neg=0  ctx=nao',
-    '    task-2  sessao=sess-1  tokens=1200  turnos=3  neg=0  ctx=nao',
+    '    task-1  tempo=0s  sessao=sess-1  tokens=1200  turnos=3  neg=0  ctx=nao',
+    '    task-2  tempo=0s  sessao=sess-1  tokens=1200  turnos=3  neg=0  ctx=nao',
   ]);
 });
 
@@ -1259,6 +1335,7 @@ const CAPACIDADES_OPENCODE: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: false,
   relatoDeNegacoesDePermissao: false,
   formaDeInjecaoSelecionavel: true,
+  relatoDeModeloEfetivo: false,
 };
 
 const OPCOES_OPENCODE = {
@@ -1416,4 +1493,369 @@ test('caminho conhecido mas ilegivel nao e contado como contexto usado na forma 
 
   const start = logger.eventos.find((e) => e.event === 'start');
   assert.equal(start?.usou_contexto_execucao, false);
+});
+
+// ---------------------------------------------------------------------------
+// task-9 — deteccao restrita a falha, laco de espera e renovacao da janela
+// (RF-014, RF-016 a RF-020). Relogio e espera falsos: nenhum teste aguarda
+// tempo real (RNF-006).
+// ---------------------------------------------------------------------------
+
+test('(RF-014) task bem-sucedida cujo texto menciona limite de uso nao dispara espera', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    detectRateLimit: () => true,
+    async runTask() {
+      return resultado({ isError: false, exitCode: 0, rawStdout: 'rate limit mentioned here' });
+    },
+  });
+  const espera = fakeEspera();
+  const { runner, logger } = montar({ adapter, espera });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(espera.chamadas.length, 0);
+  assert.equal(eventos(logger, 'rate_limited').length, 0);
+  assert.equal(adapter.chamadas.runTask, 2);
+});
+
+test('(RF-017) task barrada e retomada conta uma vez, produz uma evidencia e soma os tokens', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  let chamada = 0;
+  const adapter = fakeAdapter({
+    detectRateLimit: (): boolean => chamada === 1,
+    async runTask() {
+      chamada += 1;
+      if (chamada === 1) {
+        return resultado({
+          isError: true,
+          exitCode: 1,
+          inputTokens: 15000,
+          rawStderr: 'Claude usage limit reached',
+        });
+      }
+      return resultado({ isError: false, exitCode: 0, inputTokens: 5000 });
+    },
+  });
+  const { runner, logger, layout, accounting, espera } = montar({ adapter });
+
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 2);
+  assert.equal(espera.chamadas.length, 1);
+  // Uma unica execucao contabilizada e um unico `end`.
+  assert.equal(eventos(logger, 'end').length, 1);
+  const runEnd = eventos(logger, 'run_end')[0];
+  assert.equal(runEnd.tasks_executadas, 1);
+  assert.equal(runEnd.tasks_com_erro, 0);
+  // Uma unica linha de evidencia.
+  const evidencias = layout.resumo!.filter((linha) => linha.includes('sessao='));
+  assert.equal(evidencias.length, 1);
+  // Os tokens da tentativa barrada estao somados ao total do lote.
+  assert.equal(accounting.total.tokensGastosAcumulado, 20000);
+  assert.equal(runEnd.tokens_gastos_total, 20000);
+});
+
+test('(RF-019) a janela renovada na retomada nao encerra o lote e o resumo segue somando tudo', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const accounting = new AccountingService();
+  // 890.000 de um teto de 900.000 ja consumidos antes do lote.
+  accounting.accumulate(resultado({ inputTokens: 890000 }));
+
+  let chamada = 0;
+  const adapter = fakeAdapter({
+    detectRateLimit: (): boolean => chamada === 1,
+    async runTask() {
+      chamada += 1;
+      if (chamada === 1) {
+        return resultado({
+          isError: true,
+          exitCode: 1,
+          inputTokens: 20000,
+          rawStderr: 'weekly limit reached',
+        });
+      }
+      return resultado({ isError: false, exitCode: 0, inputTokens: 1000 });
+    },
+  });
+  const { runner, logger } = montar({
+    adapter,
+    accounting,
+    opcoes: opcoes({ windowBudgetTokens: 900000 }),
+    windowBudgetTokens: 900000,
+  });
+
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+
+  // Nenhum encerramento por teto de janela: as duas tasks rodaram.
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(eventos(logger, 'budget_exhausted').length, 0);
+  assert.equal(eventos(logger, 'end').length, 2);
+  // O resumo continua reportando o lote inteiro: 890.000 + 20.000 + 1.000 + 1.000.
+  assert.equal(eventos(logger, 'run_end')[0].tokens_gastos_total, 912000);
+  // A retomada registrou a renovacao da janela.
+  assert.equal(eventos(logger, 'rate_limited')[0].tentativa, 1);
+});
+
+test('(RF-010) o resumo apresenta o tempo total e o tempo em espera apenas quando houve espera', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  let chamada = 0;
+  const relogio = fakeRelogio();
+  const adapter = fakeAdapter({
+    detectRateLimit: (): boolean => chamada === 1,
+    async runTask() {
+      chamada += 1;
+      relogio.avancar(72000);
+      if (chamada === 1) {
+        return resultado({ isError: true, exitCode: 1, rawStderr: 'session limit' });
+      }
+      return resultado({});
+    },
+  });
+  const espera = fakeEspera({ esperaSegundos: 8100, aoAguardar: () => relogio.avancar(8100000) });
+  const { runner, logger, layout } = montar({ adapter, espera, relogio });
+
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+
+  const texto = layout.resumo!.join('\n');
+  // 72 s da tentativa barrada + 8100 s de espera + 72 s da tentativa que executou.
+  assert.ok(texto.includes('Tempo total        2h 17m'), texto);
+  assert.ok(texto.includes('Tempo em espera    2h 15m'), texto);
+  // A evidencia traz o tempo da tentativa que produziu o `end`, e so ele.
+  assert.ok(texto.includes('tempo=1m 12s  sessao='), texto);
+  const runEnd = eventos(logger, 'run_end')[0];
+  assert.equal(runEnd.tempo_em_espera_segundos, 8100);
+  assert.equal(runEnd.tempo_total_segundos, 8244);
+});
+
+test('(RF-010) sem espera o resumo nao apresenta a linha de tempo em espera', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const { runner, layout, logger } = montar();
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+
+  assert.ok(!layout.resumo!.join('\n').includes('Tempo em espera'));
+  assert.equal(eventos(logger, 'run_end')[0].tempo_em_espera_segundos, 0);
+});
+
+test('(RF-020) a desistencia encerra com limite_de_uso, resumo parcial e sem contabilizar a barrada', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    detectRateLimit: () => true,
+    async runTask() {
+      return resultado({ isError: true, exitCode: 1, inputTokens: 3000, rawStderr: 'usage limit' });
+    },
+  });
+  const espera = fakeEspera({
+    decisoes: [
+      { retomar: false, motivoDaDesistencia: 'teto de espera de 6h esgotado sem renovacao da cota' },
+    ],
+  });
+  const { runner, logger, layout } = montar({ adapter, espera });
+
+  const motivo = await runner.run(tasks);
+  await runner.encerrar(motivo);
+
+  assert.equal(motivo, 'limite_de_uso');
+  // A segunda task nunca foi iniciada.
+  assert.equal(adapter.chamadas.runTask, 1);
+
+  const runEnd = eventos(logger, 'run_end')[0];
+  assert.equal(runEnd.motivo, 'limite_de_uso');
+  // RF-017: a barrada nao e executada nem erro; os tokens, sim, sao somados.
+  assert.equal(runEnd.tasks_executadas, 0);
+  assert.equal(runEnd.tasks_com_erro, 0);
+  assert.equal(runEnd.tokens_gastos_total, 3000);
+
+  // Resumo parcial impresso, com o motivo da desistencia anunciado em tela.
+  const texto = layout.resumo!.join('\n');
+  assert.ok(texto.includes('limite_de_uso'), texto);
+  assert.ok(texto.includes('nenhuma task executada'), texto);
+  assert.ok(
+    layout.mensagens.some(
+      ([kind, msg]) =>
+        kind === 'aviso' && msg.includes('teto de espera de 6h esgotado sem renovacao da cota')
+    )
+  );
+});
+
+test('(RF-018) o aviso de trabalho parcial precede a reexecucao, nomeando task e tentativa', async () => {
+  const tasks = await criarTasks([{ numero: 7, done: false }]);
+  let chamada = 0;
+  const adapter = fakeAdapter({
+    detectRateLimit: (): boolean => chamada <= 2,
+    async runTask() {
+      chamada += 1;
+      if (chamada < 3) {
+        return resultado({ isError: true, exitCode: 1, rawStderr: 'usage limit' });
+      }
+      return resultado({});
+    },
+  });
+  const { runner, layout } = montar({ adapter, totalTasks: 1 });
+
+  await runner.run(tasks);
+
+  const avisos = layout.mensagens
+    .filter(([kind, msg]) => kind === 'aviso' && msg.includes('trabalho parcial'))
+    .map(([, msg]) => msg);
+  assert.deepStrictEqual(avisos, [
+    'task-7 [1/1]: tentativa 2 - a tentativa anterior foi interrompida por limite de uso e pode ter deixado trabalho parcial no diretorio',
+    'task-7 [1/1]: tentativa 3 - a tentativa anterior foi interrompida por limite de uso e pode ter deixado trabalho parcial no diretorio',
+  ]);
+  // A primeira tentativa nao e precedida do aviso.
+  assert.equal(adapter.chamadas.runTask, 3);
+});
+
+test('(RF-025) a ordem dos eventos de uma espera bem-sucedida e rate_limited, aguardando_limite, retomada, end', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const logger = fakeLogger();
+  let chamada = 0;
+  const adapter = fakeAdapter({
+    detectRateLimit: (): boolean => chamada === 1,
+    async runTask() {
+      chamada += 1;
+      if (chamada === 1) {
+        return resultado({ isError: true, exitCode: 1, rawStderr: 'usage limit' });
+      }
+      return resultado({});
+    },
+  });
+  // A espera falsa grava os mesmos dois eventos que o servico real grava.
+  const espera = fakeEspera({
+    aoAguardar: () => {
+      void logger.obj.logEvent({ event: 'aguardando_limite' } as never);
+      void logger.obj.logEvent({ event: 'retomada' } as never);
+    },
+  });
+  const { runner } = montar({ adapter, espera, logger });
+
+  await runner.run(tasks);
+
+  const ordem = logger.eventos
+    .map((e) => e.event)
+    .filter((e) => ['rate_limited', 'aguardando_limite', 'retomada', 'end'].includes(e as string));
+  assert.deepStrictEqual(ordem, ['rate_limited', 'aguardando_limite', 'retomada', 'end']);
+});
+
+test('(CT-043) o evento rate_limited carrega tentativa, renovacao prevista, origem e contexto', async () => {
+  const tasks = await criarTasks([{ numero: 3, done: false }]);
+  // O relogio falso comeca 1h antes do instante informado: mais distante que o
+  // teto absoluto de 12h, `determinarRenovacao` devolveria `null` (RNF-007).
+  const relogio = fakeRelogio((1789574400 - 3600) * 1000);
+  const adapter = fakeAdapter({
+    detectRateLimit: () => true,
+    async runTask() {
+      return resultado({
+        isError: true,
+        exitCode: 1,
+        rawStderr: 'Claude usage limit reached. resets at 1789574400',
+      });
+    },
+  });
+  const espera = fakeEspera({
+    decisoes: [{ retomar: false, motivoDaDesistencia: 'teto esgotado' }],
+  });
+  const { runner, logger } = montar({ adapter, espera, relogio });
+
+  await runner.run(tasks);
+
+  const rate = eventos(logger, 'rate_limited')[0];
+  assert.equal(rate.task, 'task-3.md');
+  assert.equal(rate.tentativa, 1);
+  assert.equal(rate.contexto, 'task');
+  assert.equal(rate.origem_horario, 'informado');
+  assert.equal(rate.renovacao_prevista, new Date(1789574400 * 1000).toISOString());
+});
+
+test('(RF-024) a interrupcao durante a espera segue o caminho de encerramento por interrupcao', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    detectRateLimit: () => true,
+    async runTask() {
+      return resultado({ isError: true, exitCode: 1, rawStderr: 'usage limit' });
+    },
+  });
+  const alvo: { runner: { interromper(): Promise<void> } | null } = { runner: null };
+  const espera = fakeEspera({
+    aoAguardar: () => {
+      void alvo.runner!.interromper();
+    },
+  });
+  const montado = montar({ adapter, espera });
+  alvo.runner = montado.runner as never;
+
+  const motivo = await montado.runner.run(tasks);
+  await montado.runner.encerrar(motivo);
+
+  assert.equal(motivo, 'interrompido_pelo_usuario');
+  assert.equal(adapter.chamadas.runTask, 1);
+  // Cursor restaurado, encerramento registrado e resumo parcial impresso.
+  assert.equal(montado.layout.disposeChamado, true);
+  assert.equal(eventos(montado.logger, 'interrompido').length, 1);
+  assert.equal(eventos(montado.logger, 'run_end')[0].motivo, 'interrompido_pelo_usuario');
+  assert.ok(Array.isArray(montado.layout.resumo));
+});
+
+test('(caso 7) task que falha sem texto de limite segue o caminho de erro vigente', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    detectRateLimit: () => false,
+    async runTask() {
+      return resultado({ isError: true, exitCode: 1, subtype: 'parse_error' });
+    },
+  });
+  const espera = fakeEspera();
+  const semParar = montar({ adapter, espera });
+  const motivo = await semParar.runner.run(tasks);
+  await semParar.runner.encerrar(motivo);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(espera.chamadas.length, 0);
+  assert.equal(eventos(semParar.logger, 'run_end')[0].tasks_com_erro, 2);
+
+  const comParar = montar({
+    adapter: fakeAdapter({
+      detectRateLimit: () => false,
+      async runTask() {
+        return resultado({ isError: true, exitCode: 1, subtype: 'parse_error' });
+      },
+    }),
+    opcoes: opcoes({ stopOnFailure: true }),
+  });
+  assert.equal(await comParar.runner.run(tasks), 'falha_na_task');
+});
+
+test('(caso 28) em --dry-run nenhuma deteccao de limite ocorre', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter({ detectRateLimit: () => true });
+  const espera = fakeEspera();
+  const { runner, logger } = montar({ adapter, espera, opcoes: opcoes({ dryRun: true }) });
+
+  const motivo = await runner.run(tasks);
+
+  assert.equal(motivo, 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 0);
+  assert.equal(espera.chamadas.length, 0);
+  assert.equal(eventos(logger, 'rate_limited').length, 0);
 });

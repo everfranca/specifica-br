@@ -69,8 +69,8 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     cacheTuning: true,
     contextPack: true,
     contextInjection: 'prompt',
-    packModel: 'anthropic/claude-haiku-4-5',
-    packEffort: 'low',
+    maxWait: '6h',
+    waitOnLimit: true,
     packMaxTokens: 8000,
     tasks: '',
     allow: [],
@@ -545,7 +545,7 @@ test('detectRateLimit delega ao modulo compartilhado', () => {
   assert.equal(adapter.detectRateLimit('tudo certo'), false);
 });
 
-test('capacidades declaram os treze campos da coluna OpenCode', () => {
+test('capacidades declaram os campos da coluna OpenCode', () => {
   assert.deepEqual(novoAdapter().capacidades, {
     execucaoNaoInterativa: true,
     modoSemPromptDePermissao: true,
@@ -560,7 +560,15 @@ test('capacidades declaram os treze campos da coluna OpenCode', () => {
     otimizacaoDeCacheDePrompt: false,
     relatoDeNegacoesDePermissao: false,
     formaDeInjecaoSelecionavel: true,
+    relatoDeModeloEfetivo: false,
   });
+});
+
+// CT-047: `modeloEmUso` e o valor solicitado, ecoado - nao e relato de modelo
+// efetivo. Por isso a capacidade e `false`, e o aviso de divergencia de RF-013
+// nunca sai por esta ferramenta.
+test('relatoDeModeloEfetivo e false no OpenCode', () => {
+  assert.equal(novoAdapter().capacidades.relatoDeModeloEfetivo, false);
 });
 
 const FALHA_DE_VARIANTE: FakeResposta = {

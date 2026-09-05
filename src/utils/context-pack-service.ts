@@ -1,10 +1,23 @@
 import path from 'node:path';
-import process from 'node:process';
 import fs from 'fs-extra';
-import type { BuildContextPackArgsInput, TaskResult } from '../types/tool-adapter.js';
-import type { EffortLevel, PackResult } from '../types/executar-tasks.js';
+import type {
+  BuildContextPackArgsInput,
+  TaskResult,
+  ToolCapabilities,
+} from '../types/tool-adapter.js';
+import type {
+  EffortLevel,
+  OrigemHorario,
+  PackResult,
+  Relogio,
+} from '../types/executar-tasks.js';
+import type { StatusKind } from './terminal/index.js';
 import type { AccountingService } from './accounting.js';
 import type { RunLoggerService } from './run-logger.js';
+import type { EntradaDeEspera, ResultadoDeEspera } from './espera-limite.js';
+import { relogioDoSistema } from './espera-limite.js';
+import { determinarRenovacao } from './renovacao-de-cota.js';
+import { formatarDuracao, formatarMilhar } from './formatos.js';
 import { CONTEXT_PACK_PROMPT, CONTEXT_PACK_TEMPLATE } from './context-pack-prompt.js';
 
 const NOME_DESTILADO = 'contexto-execucao.md';
@@ -15,6 +28,8 @@ const NOME_DESTILADO = 'contexto-execucao.md';
  * `buildContextPackArgs`, `runPack` nem `parseResult`.
  */
 export interface ContextPackToolAdapter {
+  readonly capacidades: ToolCapabilities;
+
   runPack(
     prompt: string,
     entrada: BuildContextPackArgsInput,
@@ -22,13 +37,30 @@ export interface ContextPackToolAdapter {
     onStderrChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<TaskResult>;
+
+  /** Mesmo criterio de CT-044 usado pelo loop de tasks. */
+  detectRateLimit(rawOutput: string): boolean;
 }
 
-/** Opcoes de `executar-tasks` que afetam o Contexto de Execucao (CT-021). */
+/**
+ * Politica de espera do lote consumida aqui (CT-048). A instancia e a MESMA
+ * injetada no `TaskRunner`: e isso que faz o teto de `--max-wait` valer para o
+ * lote inteiro, somando as esperas das tasks e as da construcao (RF-016, RF-021).
+ */
+export interface EsperaDeLimiteDeUso {
+  aguardar(entrada: EntradaDeEspera): Promise<ResultadoDeEspera>;
+}
+
+/**
+ * Opcoes de `executar-tasks` que afetam o Contexto de Execucao (CT-021).
+ *
+ * RF-012: `model` e `effort` sao os do lote - nao existe mais par proprio do
+ * destilado. Apenas o teto de tamanho permanece como opcao propria.
+ */
 export interface ContextPackOpcoes {
   contextPack: boolean;
-  packModel: string;
-  packEffort: EffortLevel;
+  model: string;
+  effort: EffortLevel;
   packMaxTokens: number;
   cacheTuning: boolean;
 }
@@ -39,11 +71,13 @@ export interface ContextPackContexto {
   cwd: string;
   opcoes: ContextPackOpcoes;
   /**
-   * Destino das mensagens `[ AVIS]`/`[ INFO]` do mecanismo. Default: `stderr` do
-   * processo. O `stderr` do processo filho nao passa por aqui: vai direto para
+   * Canal unico de mensagens de estado (RF-003, CT-046). O servico publica
+   * `(kind, texto)` SEM rotulo embutido: quem monta o rotulo, encerra o
+   * indicador de progresso e escreve a linha e a camada de apresentacao. O
+   * `stderr` do processo filho nao passa por aqui: vai direto para
    * `RunLoggerService.appendStderr` (CT-012).
    */
-  onMensagem?: (mensagem: string) => void;
+  onMensagem?: (kind: StatusKind, texto: string) => void;
 }
 
 interface DecisaoDeriva {
@@ -68,10 +102,18 @@ export class ContextPackService {
   private abortSolicitado = false;
   private readonly cancelamento = new AbortController();
 
+  /**
+   * @param espera Instancia unica da politica de espera do lote (CT-048).
+   *   `null` desliga a espera na construcao: a falha por limite de uso segue o
+   *   caminho de falha vigente, sem reexecucao.
+   * @param relogio Porta de tempo (CT-048), substituida nos testes.
+   */
   constructor(
     private readonly adapter: ContextPackToolAdapter,
     private readonly accounting: AccountingService,
-    private readonly logger: RunLoggerService
+    private readonly logger: RunLoggerService,
+    private readonly espera: EsperaDeLimiteDeUso | null = null,
+    private readonly relogio: Relogio = relogioDoSistema
   ) {}
 
   /**
@@ -175,7 +217,11 @@ export class ContextPackService {
     const estTokens = Math.floor((bytes * 10) / 35);
 
     await this.logger.logEvent({ event: 'pack_reused', ts: '', arquivo: destilado });
-    this.emitir(contexto, '[ INFO] Contexto de Execucao em dia - reaproveitando o destilado existente');
+    this.emitir(
+      contexto,
+      'info',
+      'Contexto de Execucao em dia - reaproveitando o destilado existente'
+    );
 
     return {
       decisao: 'reaproveitado',
@@ -189,6 +235,11 @@ export class ContextPackService {
     };
   }
 
+  /**
+   * Passo 3 da secao 5.1: constroi o destilado com o modelo e o esforco DO LOTE
+   * (RF-012), refaz a construcao apos uma espera bem-sucedida por limite de uso
+   * (RF-021) e publica o desfecho pelo canal unico (RF-003).
+   */
   private async construir(
     contexto: ContextPackContexto,
     deriva: DecisaoDeriva,
@@ -201,20 +252,57 @@ export class ContextPackService {
       .split('{{TEMPLATE_PATH}}')
       .join(CONTEXT_PACK_TEMPLATE);
 
+    // RF-012: o par vem do lote. Os NOMES de campo de `BuildContextPackArgsInput`
+    // sao preservados (CT-020/CT-021): muda a origem do valor, nao o contrato.
     const entrada: BuildContextPackArgsInput = {
       featureDir,
-      packModel: opcoes.packModel,
-      packEffort: opcoes.packEffort,
+      packModel: opcoes.model,
+      packEffort: opcoes.effort,
       cacheTuning: opcoes.cacheTuning,
     };
 
-    const resultado = await this.adapter.runPack(
-      prompt,
-      entrada,
-      cwd,
-      (chunk) => this.logger.appendStderr(chunk),
-      this.cancelamento.signal
-    );
+    let tentativa = 1;
+    let resultado: TaskResult;
+    let duracaoSegundos: number;
+
+    for (;;) {
+      const inicio = this.relogio.agora();
+
+      resultado = await this.adapter.runPack(
+        prompt,
+        entrada,
+        cwd,
+        (chunk) => this.logger.appendStderr(chunk),
+        this.cancelamento.signal
+      );
+
+      duracaoSegundos = Math.max(0, Math.round((this.relogio.agora() - inicio) / 1000));
+
+      const barrada = await this.tratarLimiteDeUso(contexto, resultado, tentativa);
+
+      if (barrada === null) {
+        break;
+      }
+
+      if (barrada.desistiu) {
+        this.jaTentouConstruir = true;
+        // RF-021: o lote nao prossegue sem o destilado nem reaproveita destilado
+        // desatualizado. Quem encerra com codigo 1 e o comando.
+        this.ultimoResultado = {
+          decisao: 'falhou',
+          caminho: null,
+          bytes: 0,
+          estTokens: 0,
+          acimaDoTeto: false,
+          motivo: 'limite_de_uso',
+          fonteAlterada: deriva.fonteAlterada,
+          tokensGastos: barrada.tokensGastos,
+        };
+        return this.ultimoResultado;
+      }
+
+      tentativa += 1;
+    }
 
     const arquivoExiste = await fs.pathExists(destilado);
     const { tokensDaTask, custoDaTask } = this.accounting.accumulate(resultado);
@@ -225,7 +313,8 @@ export class ContextPackService {
     if (!sucesso) {
       this.emitir(
         contexto,
-        '[ AVIS] falha ao construir o Contexto de Execucao - seguindo sem ele'
+        'aviso',
+        'falha ao construir o Contexto de Execucao - seguindo sem ele'
       );
 
       const motivo = !arquivoExiste
@@ -264,7 +353,24 @@ export class ContextPackService {
     if (acimaDoTeto) {
       this.emitir(
         contexto,
-        `[ AVIS] Contexto de Execucao acima do teto: ~${estTokens} > ${teto} tokens. O excedente sera pago em cada task.`
+        'aviso',
+        `Contexto de Execucao acima do teto: ~${estTokens} > ${teto} tokens. O excedente sera pago em cada task.`
+      );
+    }
+
+    const { reportado, divergente, temRelato } = this.avaliarModeloEfetivo(
+      opcoes.model,
+      resultado.modelosReportados
+    );
+
+    // RF-013: o aviso sai se e somente se a ferramenta DECLARA a capacidade de
+    // relatar o modelo efetivo. Sem a declaracao, o valor reportado e o eco do
+    // pedido, e a divergencia aparente nao significa nada.
+    if (temRelato && divergente) {
+      this.emitir(
+        contexto,
+        'aviso',
+        `Contexto de Execucao construido em ${reportado}, e não em ${opcoes.model}`
       );
     }
 
@@ -275,8 +381,14 @@ export class ContextPackService {
       fonte_alterada: deriva.fonteAlterada,
       arquivo: destilado,
       session_id: resultado.sessionId,
-      pack_model: opcoes.packModel,
-      pack_effort: opcoes.packEffort,
+      pack_model: opcoes.model,
+      pack_effort: opcoes.effort,
+      // CT-047: gravado SEMPRE, com o valor devolvido pela ferramenta. A
+      // capacidade governa apenas o aviso; omitir o campo apagaria a informacao
+      // de que a ferramenta ecoou o pedido.
+      pack_model_efetivo: resultado.modelosReportados,
+      pack_model_divergente: divergente,
+      duracao_segundos: duracaoSegundos,
       num_turns: resultado.numTurns,
       bytes_pack: bytes,
       est_tokens_pack: estTokens,
@@ -291,6 +403,15 @@ export class ContextPackService {
       custo_usd: this.accounting.formatCustoRegistro(custoDaTask),
     });
 
+    // RF-013: sem relato confiavel a linha apresenta o modelo SOLICITADO e o
+    // identifica como tal - nunca o apresenta como efetivo.
+    const modeloExibido = temRelato ? reportado : `${opcoes.model} (solicitado)`;
+    this.emitir(
+      contexto,
+      'ok',
+      `Contexto de Execucao construido em ${modeloExibido} - ${formatarMilhar(bytes)} bytes - ${formatarDuracao(duracaoSegundos)}`
+    );
+
     this.ultimoResultado = {
       decisao: 'construido',
       caminho: path.resolve(destilado),
@@ -302,6 +423,95 @@ export class ContextPackService {
       tokensGastos: tokensDaTask,
     };
     return this.ultimoResultado;
+  }
+
+  /**
+   * Passo 3a da secao 5.1. Aplica o MESMO criterio de CT-044 usado pelo loop de
+   * tasks: o conteudo do fluxo de erro nao classifica a execucao como falha.
+   *
+   * @returns `null` quando nao ha limite de uso a tratar - o chamador segue o
+   *   caminho normal. Caso contrario, se a espera desistiu ou se a construcao
+   *   deve ser refeita.
+   */
+  private async tratarLimiteDeUso(
+    contexto: ContextPackContexto,
+    resultado: TaskResult,
+    tentativa: number
+  ): Promise<{ desistiu: boolean; tokensGastos: number } | null> {
+    if (this.espera === null) {
+      return null;
+    }
+
+    const falhou = resultado.isError || resultado.exitCode !== 0;
+    if (!falhou) {
+      return null;
+    }
+
+    const textoBruto = `${resultado.rawStdout}\n${resultado.rawStderr}`;
+    if (!this.adapter.detectRateLimit(textoBruto)) {
+      return null;
+    }
+
+    // RF-017: os tokens da tentativa barrada SAO contabilizados - foram gastos
+    // de fato -, mas a tentativa nao produz `pack_build` nem `pack_build_failed`.
+    const { tokensDaTask } = this.accounting.accumulate(resultado);
+    const renovacao = determinarRenovacao(textoBruto, this.relogio.agora());
+    const origem: OrigemHorario = renovacao === null ? 'sondagem' : 'informado';
+
+    await this.logger.logEvent({
+      event: 'rate_limited',
+      ts: '',
+      task: NOME_DESTILADO,
+      tentativa,
+      renovacao_prevista: renovacao === null ? null : renovacao.toISOString(),
+      origem_horario: origem,
+      contexto: 'context_pack',
+    });
+
+    const decisao = await this.espera.aguardar({
+      textoBruto,
+      contexto: 'context_pack',
+      task: null,
+      posicao: 0,
+      total: 0,
+      tentativa,
+      signal: this.cancelamento.signal,
+    });
+
+    if (decisao.retomar && !this.abortSolicitado) {
+      return { desistiu: false, tokensGastos: tokensDaTask };
+    }
+
+    this.emitir(
+      contexto,
+      'aviso',
+      `${decisao.motivoDaDesistencia ?? 'limite de uso'} - encerrando o lote`
+    );
+    return { desistiu: true, tokensGastos: tokensDaTask };
+  }
+
+  /**
+   * Regra de divergencia de CT-045, literal:
+   * `divergente = !reportado.toLowerCase().includes(solicitado.toLowerCase())`.
+   * O relato vem como identificador completo (`claude-opus-4-6`) e a solicitacao
+   * como apelido (`opus`); comparacao por igualdade produziria aviso em todo
+   * lote correto.
+   *
+   * Relato vazio nao e relato: `temRelato` cai para `false`, o que leva a linha
+   * de conclusao a apresentar o modelo solicitado (RF-013) e suprime a
+   * divergencia. A gravacao de `pack_model_efetivo` nao passa por aqui.
+   */
+  private avaliarModeloEfetivo(
+    solicitado: string,
+    reportado: string
+  ): { reportado: string; divergente: boolean; temRelato: boolean } {
+    const temRelato = this.adapter.capacidades.relatoDeModeloEfetivo && reportado !== '';
+    const divergente =
+      reportado === ''
+        ? false
+        : !reportado.toLowerCase().includes(solicitado.toLowerCase());
+
+    return { reportado, divergente, temRelato };
   }
 
   private resultadoSimples(
@@ -321,12 +531,13 @@ export class ContextPackService {
     };
   }
 
-  private emitir(contexto: ContextPackContexto, mensagem: string): void {
-    if (contexto.onMensagem) {
-      contexto.onMensagem(mensagem);
-      return;
-    }
-
-    process.stderr.write(`${mensagem}\n`);
+  /**
+   * Canal unico de RF-003: publica `(kind, texto)` sem rotulo embutido. Sem
+   * assinante, nada e escrito - este servico nunca escreve direto no fluxo de
+   * saida, porque a escrita direta sobrescreve o indicador de progresso em vez
+   * de substitui-lo.
+   */
+  private emitir(contexto: ContextPackContexto, kind: StatusKind, texto: string): void {
+    contexto.onMensagem?.(kind, texto);
   }
 }

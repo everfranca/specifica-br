@@ -30,7 +30,16 @@ import {
   utilDoContexto,
   escreverLinha,
 } from './coluna.js';
-import type { LayoutContext, TaskStartInfo, TaskEndInfo } from './types.js';
+import type {
+  LayoutContext,
+  TaskStartInfo,
+  TaskEndInfo,
+} from './types.js';
+import type {
+  DadosDeAbertura,
+  EstadoDeEspera,
+} from '../../types/executar-tasks.js';
+import { formatarDuracao } from '../formatos.js';
 import { QUADROS_SPINNER, GLYPH } from '../terminal/index.js';
 import type { StatusKind } from '../terminal/index.js';
 
@@ -184,7 +193,7 @@ export class LoteLayout extends LayoutBase {
       return base;
     }
     const segundos = Math.floor((Date.now() - item.inicioMs) / 1000);
-    return `${this.contexto.painter.petroleo(base)} ${this.contexto.painter.muted(`${segundos}s`)}`;
+    return `${this.contexto.painter.petroleo(base)} ${this.contexto.painter.muted(formatarDuracao(segundos))}`;
   }
 
   private linhasDoBloco(): string[] {
@@ -266,9 +275,28 @@ export class LoteLayout extends LayoutBase {
     }
   }
 
-  header(linhas: string[]): void {
+  header(dados: DadosDeAbertura): void {
     this.encerrarBloco();
-    super.header(linhas);
+    super.header(dados);
+  }
+
+  // Os tres metodos de espera apenas encerram o bloco de altura fixa antes de
+  // escrever, exatamente como `message` e `summary` (CT-046): o comportamento
+  // de espera em si e o da base, unico para as quatro estrategias.
+
+  waitStart(estado: EstadoDeEspera): void {
+    this.encerrarBloco();
+    super.waitStart(estado);
+  }
+
+  waitUpdate(estado: EstadoDeEspera): void {
+    this.encerrarBloco();
+    super.waitUpdate(estado);
+  }
+
+  waitEnd(esperaEfetivaSegundos: number): void {
+    this.encerrarBloco();
+    super.waitEnd(esperaEfetivaSegundos);
   }
 
   summary(linhas: string[]): void {

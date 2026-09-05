@@ -4,13 +4,17 @@ import process from 'node:process';
 import { resolveHome } from './path-resolver.js';
 import {
   GlobalConfig,
+  ResolvedGlobalConfig,
   ProjectConfig,
   LayoutName,
+  HeaderStyle,
   ToolSlug,
   LAYOUT_NAMES,
+  HEADER_STYLE_NAMES,
   TOOL_SLUGS,
   CONFIG_SCHEMA_VERSION,
   DEFAULT_LAYOUT,
+  DEFAULT_HEADER_STYLE,
 } from '../types/config.js';
 
 const INVALID_CONFIG_MESSAGE = '~/.specifica-br/config.json invalido. Corrija ou remova o arquivo.';
@@ -29,9 +33,10 @@ class GlobalConfigService {
   public readonly configPath: string;
   public readonly logsBaseDir: string;
 
-  private static readonly DEFAULT: GlobalConfig = {
+  private static readonly DEFAULT: ResolvedGlobalConfig = {
     version: CONFIG_SCHEMA_VERSION,
     layout: DEFAULT_LAYOUT,
+    cabecalho: DEFAULT_HEADER_STYLE,
     projetos: {},
   };
 
@@ -45,10 +50,11 @@ class GlobalConfigService {
     return path.join(this.baseDir, `config.${process.pid}.tmp`);
   }
 
-  private cloneDefault(): GlobalConfig {
+  private cloneDefault(): ResolvedGlobalConfig {
     return {
       version: CONFIG_SCHEMA_VERSION,
       layout: DEFAULT_LAYOUT,
+      cabecalho: DEFAULT_HEADER_STYLE,
       projetos: {},
     };
   }
@@ -56,12 +62,13 @@ class GlobalConfigService {
   /**
    * Le e valida a configuracao global.
    *
-   * @returns Configuracao normalizada. Arquivo ausente devolve o default em memoria.
+   * @returns Configuracao normalizada, com `cabecalho` sempre resolvido. Arquivo
+   *   ausente devolve o default em memoria.
    * @throws {Error} `INVALID_CONFIG_MESSAGE` quando o arquivo e ilegivel, tem JSON
    *   invalido, raiz nao-objeto ou `version` diferente de 1. Mensagem nominal
    *   quando uma `ferramenta` registrada esta fora dos cinco slugs.
    */
-  public async load(): Promise<GlobalConfig> {
+  public async load(): Promise<ResolvedGlobalConfig> {
     let raw: string;
 
     try {
@@ -102,6 +109,13 @@ class GlobalConfigService {
       ? (root.layout as LayoutName)
       : DEFAULT_LAYOUT;
 
+    // CT-042: preferencia cosmetica nao bloqueia execucao. Valor ausente ou fora
+    // do conjunto cai para `painel` em silencio, sem erro e sem reescrever o
+    // arquivo lido -- e a mesma regra ja aplicada a `layout` (CT-010).
+    const cabecalho: HeaderStyle = HEADER_STYLE_NAMES.includes(root.cabecalho as HeaderStyle)
+      ? (root.cabecalho as HeaderStyle)
+      : DEFAULT_HEADER_STYLE;
+
     const projetos: Record<string, ProjectConfig> = {};
     const projetosRaw = root.projetos;
 
@@ -127,7 +141,7 @@ class GlobalConfigService {
       }
     }
 
-    return { version: CONFIG_SCHEMA_VERSION, layout, projetos };
+    return { version: CONFIG_SCHEMA_VERSION, layout, cabecalho, projetos };
   }
 
   /**
@@ -178,6 +192,24 @@ class GlobalConfigService {
 
     const config = await this.load();
     config.layout = layout;
+    await this.save(config);
+  }
+
+  /**
+   * Grava o estilo de cabecalho da maquina sem tocar em nenhuma outra chave,
+   * pela mesma escrita atomica (`.tmp` + `rename`) de `setLayout` (CT-042).
+   *
+   * @throws {Error} Quando `estilo` esta fora das tres formas suportadas.
+   */
+  public async setHeaderStyle(estilo: HeaderStyle): Promise<void> {
+    if (!HEADER_STYLE_NAMES.includes(estilo)) {
+      throw new Error(
+        `cabecalho ${String(estilo)} invalido. Use um de: ${HEADER_STYLE_NAMES.join(', ')}`
+      );
+    }
+
+    const config = await this.load();
+    config.cabecalho = estilo;
     await this.save(config);
   }
 

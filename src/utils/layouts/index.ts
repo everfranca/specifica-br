@@ -25,6 +25,7 @@ export type {
   TaskStartInfo,
   TaskEndInfo,
 } from './types.js';
+export type { EstadoDeEspera } from '../../types/executar-tasks.js';
 
 /**
  * Instancia o layout `nome` no `contexto` dado.

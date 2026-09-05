@@ -39,7 +39,7 @@ test('load sem arquivo devolve o default e nao cria arquivo', async () => {
   const servico = novoServico();
   const config = await servico.load();
 
-  assert.deepStrictEqual(config, { version: 1, layout: 'coluna', projetos: {} });
+  assert.deepStrictEqual(config, { version: 1, layout: 'coluna', cabecalho: 'painel', projetos: {} });
   assert.strictEqual(await fs.pathExists(servico.configPath), false);
   assert.strictEqual(await fs.pathExists(path.join(tmpHome, '.specifica-br')), false);
 });
@@ -140,3 +140,70 @@ test('setProjectTool com slug fora dos cinco lanca erro de validacao', async () 
   const servico = novoServico();
   await assert.rejects(servico.setProjectTool('projeto-a', 'vscode' as never));
 });
+
+test('load com cabecalho valido devolve o estilo guardado', async () => {
+  const servico = novoServico();
+  await escreverConfig(
+    servico,
+    JSON.stringify({ version: 1, layout: 'coluna', cabecalho: 'regua', projetos: {} })
+  );
+
+  assert.strictEqual((await servico.load()).cabecalho, 'regua');
+});
+
+test('setHeaderStyle grava a chave e preserva version, layout e projetos', async () => {
+  const servico = novoServico();
+  await servico.setLayout('moldura');
+  await servico.setProjectTool('projeto-a', 'cursor');
+
+  await servico.setHeaderStyle('compacto');
+
+  const config = await servico.load();
+  assert.strictEqual(config.version, 1);
+  assert.strictEqual(config.layout, 'moldura');
+  assert.strictEqual(config.cabecalho, 'compacto');
+  assert.strictEqual(config.projetos?.['projeto-a']?.ferramenta, 'cursor');
+});
+
+test('setHeaderStyle seguido de setLayout preserva as duas chaves', async () => {
+  const servico = novoServico();
+  await servico.setHeaderStyle('regua');
+  await servico.setLayout('lote');
+
+  const config = await novoServico().load();
+  assert.strictEqual(config.cabecalho, 'regua');
+  assert.strictEqual(config.layout, 'lote');
+});
+
+test('load de configuracao da 1.9.0 sem a chave devolve painel e nao reescreve o arquivo', async () => {
+  const servico = novoServico();
+  const antes = JSON.stringify(
+    { version: 1, layout: 'moldura', projetos: { p: { ferramenta: 'kiro', atualizadoEm: 'x' } } },
+    null,
+    2
+  );
+  await escreverConfig(servico, antes);
+
+  const config = await servico.load();
+
+  assert.strictEqual(config.cabecalho, 'painel');
+  assert.strictEqual(config.layout, 'moldura');
+  assert.strictEqual(await fs.readFile(servico.configPath, 'utf-8'), antes);
+});
+
+test('load com cabecalho invalido devolve painel sem lancar e nao reescreve o arquivo', async () => {
+  const servico = novoServico();
+  const antes = JSON.stringify({ version: 1, layout: 'coluna', cabecalho: 'xpto', projetos: {} });
+  await escreverConfig(servico, antes);
+
+  const config = await servico.load();
+
+  assert.strictEqual(config.cabecalho, 'painel');
+  assert.strictEqual(await fs.readFile(servico.configPath, 'utf-8'), antes);
+});
+
+test('setHeaderStyle com valor fora das tres formas lanca erro de validacao', async () => {
+  const servico = novoServico();
+  await assert.rejects(servico.setHeaderStyle('xpto' as never));
+});
+

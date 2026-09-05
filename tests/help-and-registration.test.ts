@@ -4,6 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'fs-extra';
 import { readFileSync } from 'node:fs';
 
 import { configCommand } from '../dist/commands/config.js';
@@ -62,3 +64,67 @@ test('os comandos exportam Command com o nome esperado', () => {
   assert.equal(configCommand.name(), 'config');
   assert.equal(executarTasksCommand.name(), 'executar-tasks');
 });
+
+test('--pack-model e --pack-effort nao estao declaradas (RF-012, RF-028)', () => {
+  const longs = executarTasksCommand.options.map((o) => o.long);
+  assert.ok(!longs.includes('--pack-model'), '--pack-model nao deveria existir');
+  assert.ok(!longs.includes('--pack-effort'), '--pack-effort nao deveria existir');
+});
+
+test('--pack-model e recusada como opcao desconhecida, sem invocar a ferramenta (RF-028)', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'specifica-help-'));
+  const env = { ...process.env, HOME: home };
+
+  const { codigo, stderr } = await rodarCliComCodigo(
+    ['executar-tasks', path.join(home, 'feature'), '--pack-model', 'sonnet'],
+    env
+  );
+
+  assert.notEqual(codigo, 0);
+  assert.match(stderr, /unknown option '--pack-model'/);
+  assert.equal(await haRegistroDeExecucao(home), false);
+  await fs.remove(home);
+});
+
+test('--pack-effort e recusada como opcao desconhecida, sem invocar a ferramenta (RF-028)', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'specifica-help-'));
+  const env = { ...process.env, HOME: home };
+
+  const { codigo, stderr } = await rodarCliComCodigo(
+    ['executar-tasks', path.join(home, 'feature'), '--pack-effort', 'low'],
+    env
+  );
+
+  assert.notEqual(codigo, 0);
+  assert.match(stderr, /unknown option '--pack-effort'/);
+  assert.equal(await haRegistroDeExecucao(home), false);
+  await fs.remove(home);
+});
+
+async function rodarCliComCodigo(
+  args: string[],
+  env: NodeJS.ProcessEnv
+): Promise<{ codigo: number | undefined; stderr: string }> {
+  return execFileAsync('node', [binPath, ...args], { cwd: raiz, env }).then(
+    ({ stderr }) => ({ codigo: 0, stderr }),
+    (erro: { code?: number; stderr?: string }) => ({
+      codigo: erro.code,
+      stderr: String(erro.stderr ?? ''),
+    })
+  );
+}
+
+async function haRegistroDeExecucao(home: string): Promise<boolean> {
+  const base = path.join(home, '.specifica-br', 'logs');
+  if (!(await fs.pathExists(base))) {
+    return false;
+  }
+  const projetos = await fs.readdir(base);
+  for (const projeto of projetos) {
+    const arquivos = await fs.readdir(path.join(base, projeto));
+    if (arquivos.some((nome) => nome.endsWith('.jsonl'))) {
+      return true;
+    }
+  }
+  return false;
+}

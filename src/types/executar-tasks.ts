@@ -1,4 +1,4 @@
-import type { LayoutName, ToolSlug } from './config.js';
+import type { HeaderStyle, LayoutName, ToolSlug } from './config.js';
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -48,8 +48,8 @@ export interface ExecutarTasksOptions {
   cacheTuning: boolean;
   contextPack: boolean;
   contextInjection: ContextInjection;
-  packModel: string;
-  packEffort: EffortLevel;
+  maxWait: string;
+  waitOnLimit: boolean;
   packMaxTokens: number;
   tasks: string;
   allow: string[];
@@ -175,6 +175,9 @@ export interface RunEventRunStart {
   capacidades_ausentes: string[];
   context_injection: ContextInjection | 'n/a';
   cli_version_abaixo_do_piso: boolean;
+  max_wait_segundos: number;
+  wait_on_limit: boolean;
+  cabecalho: HeaderStyle;
 }
 
 export interface RunEventPreflightItem {
@@ -214,6 +217,14 @@ export interface RunEventPackBuild extends TokenCounters {
   session_id: string;
   pack_model: string;
   pack_effort: EffortLevel;
+  /**
+   * CT-043: modelo efetivamente reportado pela ferramenta, gravado SEMPRE, com o
+   * valor devolvido - a capacidade `relatoDeModeloEfetivo` governa apenas o
+   * aviso de divergencia (RF-013).
+   */
+  pack_model_efetivo: string;
+  pack_model_divergente: boolean;
+  duracao_segundos: number;
   num_turns: number;
   bytes_pack: number;
   est_tokens_pack: number;
@@ -293,10 +304,57 @@ export interface RunEventBudgetExhausted {
   max_budget_usd: number;
 }
 
+/** Origem do horario de renovacao usado por uma espera (CT-043). */
+export type OrigemHorario = 'informado' | 'sondagem';
+
+/** Contexto em que o limite de uso foi detectado (CT-043). */
+export type ContextoDeEspera = 'task' | 'context_pack';
+
 export interface RunEventRateLimited {
   event: 'rate_limited';
   ts: string;
   task: string;
+  /**
+   * Campos acrescentados por CT-043. Opcionais apenas enquanto o loop de tasks
+   * (task-9) e a construcao do destilado (task-10) nao os alimentam; nenhum
+   * campo existente foi removido ou renomeado (RNF-005).
+   */
+  tentativa?: number;
+  renovacao_prevista?: string | null;
+  origem_horario?: OrigemHorario;
+  contexto?: ContextoDeEspera;
+}
+
+/**
+ * Entrada em espera por limite de uso (CT-043, RF-025). `task` e `null` durante
+ * a construcao do Contexto de Execucao. Duracoes numericas e cruas, em segundos;
+ * o texto bruto da ferramenta nunca e gravado aqui (techspec secao 7).
+ */
+export interface RunEventAguardandoLimite {
+  event: 'aguardando_limite';
+  ts: string;
+  task: string | null;
+  tentativa: number;
+  origem_horario: OrigemHorario;
+  renovacao_prevista: string | null;
+  espera_planejada_segundos: number;
+  espera_acumulada_segundos_antes: number;
+  teto_espera_segundos: number;
+}
+
+/**
+ * Retomada apos uma espera bem-sucedida (CT-043, RF-025). `janela_renovada`
+ * registra a renovacao do contador da janela de RF-019, que por decisao da
+ * secao 4.6 do techspec nao vira um terceiro tipo de evento.
+ */
+export interface RunEventRetomada {
+  event: 'retomada';
+  ts: string;
+  task: string | null;
+  tentativa: number;
+  espera_efetiva_segundos: number;
+  espera_acumulada_segundos_depois: number;
+  janela_renovada: boolean;
 }
 
 export interface RunEventInterrompido {
@@ -315,6 +373,14 @@ export interface RunEventRunEnd {
   tasks_com_erro: number;
   tokens_gastos_total: number;
   custo_total_usd: string;
+  /**
+   * Duracoes do lote inteiro, numericas e cruas, em segundos (CT-043, RF-010).
+   * `tempo_em_espera_segundos` e o acumulado da instancia unica de
+   * `EsperaPorLimiteDeUso`, e vale `0` quando nao houve espera. Nenhum campo
+   * existente foi removido ou renomeado (RNF-005).
+   */
+  tempo_total_segundos: number;
+  tempo_em_espera_segundos: number;
 }
 
 export type RunEvent =
@@ -329,6 +395,8 @@ export type RunEvent =
   | RunEventEnd
   | RunEventBudgetExhausted
   | RunEventRateLimited
+  | RunEventAguardandoLimite
+  | RunEventRetomada
   | RunEventInterrompido
   | RunEventRunEnd;
 
@@ -364,4 +432,101 @@ export interface ExecutorConfig {
   $schema: typeof OPENCODE_CONFIG_SCHEMA;
   instructions?: string[];
   agent: Record<typeof OPENCODE_AGENTE_EXECUTOR, ExecutorAgentConfig>;
+}
+
+/**
+ * Conjunto unico de dados de abertura do lote entregue a camada de
+ * apresentacao (RF-005, techspec secao 3.1).
+ *
+ * E a inversao de responsabilidade da feature: o comando entrega *dados*, e a
+ * forma e decidida por `renderCabecalho`. Por isso a lista e fechada — as tres
+ * formas exibem **todos** estes campos e nenhum campo fora deles.
+ *
+ * `contextoInjecao` e o unico dado condicional: `null` quando a ferramenta nao
+ * oferece escolha de forma de injecao, caso em que a linha e omitida porque
+ * anuncia-la onde nao ha escolha seria mentira (CT-030). Nenhum outro campo e
+ * opcional, e nenhuma outra linha pode ser suprimida por qualquer forma.
+ */
+export interface DadosDeAbertura {
+  /** Grupo `alvo`: diretorio da feature, como digitado. */
+  feature: string;
+  /** Grupo `alvo`: quantidade de tasks selecionadas. */
+  tasksSelecionadas: number;
+  /** Grupo `alvo`: total de tasks encontradas. */
+  tasksTotal: number;
+  /** Grupo `alvo`: criterio de selecao, ou `'todas'`. */
+  criterioDeSelecao: string;
+  /** Grupo `motor`: ferramenta resolvida. */
+  ferramenta: ToolSlug;
+  /** Grupo `motor`: nome do executavel da ferramenta. */
+  executavel: string;
+  /** Grupo `motor`: versao da CLI; vazia vira `'desconhecida'` na origem. */
+  versao: string;
+  /** Grupo `motor`: modelo do lote. */
+  model: string;
+  /** Grupo `motor`: nivel de esforco do lote. */
+  effort: EffortLevel;
+  /** Grupo `motor`: modelo de recurso alternativo, ou `'nenhum'`. */
+  fallbackModel: string;
+  /** Grupo `motor`: descricao do modo de permissao. */
+  permissoes: string;
+  /** Grupo `contexto`: mecanismo do Contexto de Execucao ligado. */
+  contextoLigado: boolean;
+  /** Grupo `contexto`: `--dry-run` — ligado, mas nada sera construido. */
+  contextoSimulado: boolean;
+  /** Grupo `contexto`: teto de tokens ja formatado, ou `'sem teto'`. */
+  contextoTeto: string;
+  /** Grupo `contexto`: forma de injecao, ou `null` quando nao ha escolha. */
+  contextoInjecao: ContextInjection | null;
+  /** Grupo `contexto`: otimizacao de cache ligada. */
+  cacheTuning: boolean;
+  /** Grupo `contexto`: diretorios extras, ja encurtados. */
+  dirsExtras: string[];
+  /** Grupo `limites`: teto de custo por task, ja formatado. */
+  tetoCustoPorTask: string;
+  /** Grupo `limites`: teto da janela de execucao, ou `'sem teto'`. */
+  tetoJanela: string;
+  /** Grupo `limites`: teto de espera ja em forma humana, ou `'desligada'`. */
+  tetoEspera: string;
+  /** Grupo `registro`: caminho do registro de execucao, ja encurtado. */
+  registroPath: string;
+}
+
+/**
+ * Estado da espera por limite de uso, entregue a apresentacao a cada segundo
+ * (RF-022, techspec secao 3.1).
+ *
+ * A producao do estado e da politica de espera (`EsperaPorLimiteDeUso`); a
+ * apresentacao apenas o consome. `restanteSegundos` ja vem na base correta
+ * para a natureza: tempo restante total quando a renovacao e conhecida, tempo
+ * ate a proxima sondagem quando nao e.
+ */
+export interface EstadoDeEspera {
+  /** Decide se a linha mostra o tempo restante total ou o da proxima sondagem. */
+  natureza: 'renovacao_conhecida' | 'sondagem';
+  /** Tempo restante, ja na base correta para a natureza. */
+  restanteSegundos: number;
+  /** Horario absoluto previsto de retomada (ou da proxima sondagem). */
+  retomadaEm: Date;
+  /** `null` durante a construcao do Contexto de Execucao (RF-021). */
+  task: string | null;
+  /** Posicao da task no lote. */
+  posicao: number;
+  /** Total de tasks do lote. */
+  total: number;
+  /** Numero da proxima tentativa. */
+  tentativa: number;
+}
+
+/**
+ * Porta de tempo (CT-048). Existe para satisfazer RNF-006: nos testes um
+ * relogio falso avanca o tempo sem esperar nada, e nenhum teste desta feature
+ * aguarda tempo real. `relogioDoSistema`, em `utils/espera-limite.ts`, e o
+ * adapter real.
+ */
+export interface Relogio {
+  /** Instante corrente, em milissegundos epoch. */
+  agora(): number;
+  /** Aguarda `ms`, resolvendo imediatamente quando o `signal` aborta (RNF-003). */
+  esperar(ms: number, signal?: AbortSignal): Promise<void>;
 }

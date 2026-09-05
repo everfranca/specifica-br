@@ -5,29 +5,34 @@ import {
   runConfig,
   type ConfigDeps,
   type SelectLayoutParams,
+  type SelectHeaderStyleParams,
 } from '../dist/commands/config.js';
 import {
   validateChave,
   validateLayoutValor,
+  validateCabecalhoValor,
   validateFerramentaValor,
 } from '../dist/utils/config-command-validation.js';
 import { buildPreview } from '../dist/utils/layout-preview.js';
 import { createPainter, LEVEL, GLYPH } from '../dist/utils/terminal/index.js';
-import type { LayoutName, ToolSlug } from '../dist/types/config.js';
+import type { HeaderStyle, LayoutName, ToolSlug } from '../dist/types/config.js';
 
 interface FakeConfig {
   version: number;
   layout?: LayoutName;
+  cabecalho?: HeaderStyle;
   projetos?: Record<string, { ferramenta: ToolSlug; atualizadoEm: string }>;
 }
 
 interface FakeState {
   arquivo: FakeConfig | Error;
   setLayoutCalls: LayoutName[];
+  setHeaderStyleCalls: HeaderStyle[];
   setToolCalls: Array<{ projeto: string; slug: ToolSlug }>;
   saida: string[];
   erros: string[];
   selectParams: SelectLayoutParams[];
+  selectHeaderParams: SelectHeaderStyleParams[];
 }
 
 interface DepsOpts {
@@ -35,16 +40,19 @@ interface DepsOpts {
   projeto?: string;
   isTTY?: boolean;
   escolha?: LayoutName | undefined;
+  escolhaCabecalho?: HeaderStyle | undefined;
 }
 
 function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } {
   const state: FakeState = {
-    arquivo: opts.arquivo ?? { version: 1, layout: 'coluna', projetos: {} },
+    arquivo: opts.arquivo ?? { version: 1, layout: 'coluna', cabecalho: 'painel', projetos: {} },
     setLayoutCalls: [],
+    setHeaderStyleCalls: [],
     setToolCalls: [],
     saida: [],
     erros: [],
     selectParams: [],
+    selectHeaderParams: [],
   };
 
   const configService = {
@@ -53,12 +61,21 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
       if (state.arquivo instanceof Error) {
         throw state.arquivo;
       }
-      return JSON.parse(JSON.stringify(state.arquivo)) as FakeConfig;
+      // `load()` real normaliza `cabecalho` para o padrao quando ausente ou
+      // invalido (CT-042); o dublê reproduz essa garantia.
+      const copia = JSON.parse(JSON.stringify(state.arquivo)) as FakeConfig;
+      return { ...copia, cabecalho: copia.cabecalho ?? 'painel' };
     },
     async setLayout(layout: LayoutName): Promise<void> {
       state.setLayoutCalls.push(layout);
       if (!(state.arquivo instanceof Error)) {
         state.arquivo.layout = layout;
+      }
+    },
+    async setHeaderStyle(estilo: HeaderStyle): Promise<void> {
+      state.setHeaderStyleCalls.push(estilo);
+      if (!(state.arquivo instanceof Error)) {
+        state.arquivo.cabecalho = estilo;
       }
     },
     async setProjectTool(projeto: string, slug: ToolSlug): Promise<void> {
@@ -83,6 +100,10 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
     async selectLayout(params: SelectLayoutParams): Promise<LayoutName | undefined> {
       state.selectParams.push(params);
       return opts.escolha;
+    },
+    async selectHeaderStyle(params: SelectHeaderStyleParams): Promise<HeaderStyle | undefined> {
+      state.selectHeaderParams.push(params);
+      return opts.escolhaCabecalho;
     },
   };
 
@@ -185,7 +206,7 @@ test('valor invalido produz codigo de saida 1', async () => {
   assert.equal(await runConfig('layout', 'grade', deps), 1);
   assert.equal(await runConfig('ferramenta', 'copilot', deps), 1);
   assert.equal(await runConfig('chaveerrada', 'x', deps), 1);
-  assert.ok(state.erros.join('').includes('[ ERRO]'));
+  assert.ok(state.erros.join('').includes('[ERRO]'));
 });
 
 test('chave sem valor na forma nao interativa produz codigo 1', async () => {
@@ -240,6 +261,7 @@ test('a pre-visualizacao nao emite sequencia ANSI com painter de nivel NONE', ()
     painter: createPainter(LEVEL.NONE),
     glyphLevel: GLYPH.ASCII,
     largura: 72,
+    cabecalho: 'painel',
   });
   assert.ok(linhas.length > 0);
   assert.doesNotMatch(linhas.join('\n'), /\x1b\[/);
@@ -251,15 +273,121 @@ test('a pre-visualizacao emite apenas ASCII com glyphLevel ASCII', () => {
       painter: createPainter(LEVEL.NONE),
       glyphLevel: GLYPH.ASCII,
       largura: 72,
+      cabecalho: 'painel',
     });
     assert.doesNotMatch(linhas.join(''), /[^\x20-\x7E]/);
   }
 });
 
 test('config nao cria nem altera nenhum arquivo dentro do projeto', async () => {
-  const { deps, state } = fazerDeps({ isTTY: true, escolha: 'moldura' });
+  const { deps, state } = fazerDeps({ isTTY: true, escolha: 'moldura', escolhaCabecalho: undefined });
   await runConfig(undefined, undefined, deps);
   await runConfig('ferramenta', 'kiro', deps);
   assert.equal(state.setLayoutCalls.length, 1);
   assert.equal(state.setToolCalls.length, 1);
+});
+
+test('validateChave aceita a chave cabecalho ao lado de layout e ferramenta', () => {
+  assert.equal(validateChave('cabecalho'), 'cabecalho');
+});
+
+test('validateCabecalhoValor aceita as tres formas e nomeia chave, valor e aceitos', () => {
+  for (const estilo of ['painel', 'regua', 'compacto']) {
+    assert.equal(validateCabecalhoValor(estilo), estilo);
+  }
+  assert.throws(
+    () => validateCabecalhoValor('xpto'),
+    /cabecalho: xpto\. Valores aceitos: painel, regua, compacto\./
+  );
+});
+
+test('config cabecalho <valor> grava o estilo sem interacao e encerra com 0', async () => {
+  const { deps, state } = fazerDeps({ isTTY: true });
+  const code = await runConfig('cabecalho', 'regua', deps);
+  assert.equal(code, 0);
+  assert.deepEqual(state.setHeaderStyleCalls, ['regua']);
+  assert.equal(state.selectParams.length, 0);
+  assert.equal(state.selectHeaderParams.length, 0);
+});
+
+test('a saida do config exibe a linha Cabecalho entre Layout e Projeto', async () => {
+  const { deps, state } = fazerDeps({
+    projeto: 'projeto-x',
+    arquivo: { version: 1, layout: 'coluna', cabecalho: 'compacto', projetos: {} },
+  });
+  await runConfig(undefined, undefined, deps);
+  const linhas = textoSaida(state).split('\n');
+  const indice = (rotulo: string): number => linhas.findIndex((l) => l.includes(rotulo));
+  assert.match(textoSaida(state), /Cabecalho\s+compacto/);
+  assert.ok(indice('Layout') < indice('Cabecalho'));
+  assert.ok(indice('Cabecalho') < indice('Projeto'));
+});
+
+test('config com TTY abre a selecao de cabecalho apos a de layout, marcando o atual', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'moldura',
+    escolhaCabecalho: 'compacto',
+    arquivo: { version: 1, layout: 'coluna', cabecalho: 'regua', projetos: {} },
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.equal(state.selectHeaderParams.length, 1);
+  const params = state.selectHeaderParams[0];
+  assert.equal(params.choices.length, 3);
+  const atual = params.choices.find((c) => c.value === 'regua');
+  assert.ok(atual && atual.title.includes('(atual)'));
+  assert.equal(params.initial, params.choices.findIndex((c) => c.value === 'regua'));
+  assert.ok(params.choices.every((c) => c.title.split('\n').length > 1));
+  assert.deepEqual(state.setHeaderStyleCalls, ['compacto']);
+});
+
+test('config cabecalho <invalido> emite [ERRO] com chave, valor e aceitos, e encerra com 1', async () => {
+  const { deps, state } = fazerDeps({ isTTY: true });
+  const code = await runConfig('cabecalho', 'xpto', deps);
+  assert.equal(code, 1);
+  assert.deepEqual(state.setHeaderStyleCalls, []);
+  const erro = state.erros.join('');
+  assert.ok(erro.includes('[ERRO]'), erro);
+  assert.match(erro, /cabecalho/);
+  assert.match(erro, /xpto/);
+  assert.match(erro, /painel, regua, compacto/);
+});
+
+test('config cabecalho sem valor produz codigo 1', async () => {
+  const { deps, state } = fazerDeps({ isTTY: true });
+  assert.equal(await runConfig('cabecalho', undefined, deps), 1);
+  assert.deepEqual(state.setHeaderStyleCalls, []);
+});
+
+test('cancelar a segunda selecao preserva o layout escolhido na mesma sessao e nao altera o cabecalho', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'moldura',
+    escolhaCabecalho: undefined,
+    arquivo: { version: 1, layout: 'coluna', cabecalho: 'painel', projetos: {} },
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.deepEqual(state.setLayoutCalls, ['moldura']);
+  assert.deepEqual(state.setHeaderStyleCalls, []);
+  const arquivo = state.arquivo as FakeConfig;
+  assert.equal(arquivo.layout, 'moldura');
+  assert.equal(arquivo.cabecalho, 'painel');
+});
+
+test('cancelar a primeira selecao nao abre a segunda e encerra com 0', async () => {
+  const { deps, state } = fazerDeps({ isTTY: true, escolha: undefined });
+  assert.equal(await runConfig(undefined, undefined, deps), 0);
+  assert.equal(state.selectHeaderParams.length, 0);
+  assert.deepEqual(state.setHeaderStyleCalls, []);
+});
+
+test('sem TTY nenhuma das duas selecoes e aberta e o codigo de saida e 0', async () => {
+  const { deps, state } = fazerDeps({ isTTY: false, escolha: 'lote', escolhaCabecalho: 'regua' });
+  assert.equal(await runConfig(undefined, undefined, deps), 0);
+  assert.equal(state.selectParams.length, 0);
+  assert.equal(state.selectHeaderParams.length, 0);
+  assert.deepEqual(state.setLayoutCalls, []);
+  assert.deepEqual(state.setHeaderStyleCalls, []);
 });

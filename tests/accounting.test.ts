@@ -145,3 +145,44 @@ test('custoZeroNaoReportado e falso antes de qualquer task', () => {
   const s = new AccountingService();
   assert.strictEqual(s.custoZeroNaoReportado, false);
 });
+
+test('renovarJanelaDeExecucao zera a medicao da janela sem zerar os totais (RF-019)', () => {
+  const s = new AccountingService();
+  s.accumulate(resultado({ inputTokens: 890000, costUsd: 1.5 }));
+  assert.equal(s.tokensDaJanela, 890000);
+
+  s.renovarJanelaDeExecucao();
+
+  // A janela recomeca do zero...
+  assert.equal(s.tokensDaJanela, 0);
+  // ...e os totais do resumo continuam somando o lote inteiro (D7).
+  assert.equal(s.total.tokensGastosAcumulado, 890000);
+  assert.equal(s.total.inputTokens, 890000);
+  assert.equal(s.total.custoAcumuladoUsd, 1.5);
+});
+
+test('excederiaJanela compara contra a linha de base da janela (RF-019)', () => {
+  const s = new AccountingService();
+  s.accumulate(resultado({ inputTokens: 890000 }));
+  assert.equal(s.excederiaJanela(900000), false);
+
+  s.accumulate(resultado({ inputTokens: 20000 }));
+  assert.equal(s.excederiaJanela(900000), true);
+
+  s.renovarJanelaDeExecucao();
+  assert.equal(s.excederiaJanela(900000), false);
+
+  // O teto `0` continua desligando a trava, com ou sem renovacao.
+  assert.equal(s.excederiaJanela(0), false);
+});
+
+test('tokensDaJanela e a base dos tokens disponiveis, e nao o acumulado bruto', () => {
+  const s = new AccountingService();
+  s.accumulate(resultado({ inputTokens: 400000 }));
+  s.renovarJanelaDeExecucao();
+  s.accumulate(resultado({ inputTokens: 120000 }));
+
+  assert.equal(s.tokensDaJanela, 120000);
+  assert.equal(900000 - s.tokensDaJanela, 780000);
+  assert.equal(s.total.tokensGastosAcumulado, 520000);
+});

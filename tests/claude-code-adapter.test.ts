@@ -24,8 +24,8 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     cacheTuning: true,
     contextPack: true,
     contextInjection: 'prompt',
-    packModel: 'sonnet',
-    packEffort: 'low',
+    maxWait: '6h',
+    waitOnLimit: true,
     packMaxTokens: 8000,
     tasks: '',
     allow: [],
@@ -659,4 +659,11 @@ test('CT-021: buildContextPackArgs omite a flag de cache com cacheTuning desliga
     '--permission-mode',
     'acceptEdits',
   ]);
+});
+
+// CT-047: `modelosReportados` sai das chaves de `modelUsage`, que sao o modelo
+// que a CLI de fato usou. Por isso a capacidade e `true`, e so por ela o aviso
+// de divergencia de RF-013 pode ser emitido.
+test('relatoDeModeloEfetivo e true no ClaudeCode', () => {
+  assert.equal(new ClaudeCodeAdapter().capacidades.relatoDeModeloEfetivo, true);
 });

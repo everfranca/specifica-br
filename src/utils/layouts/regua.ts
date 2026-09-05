@@ -47,7 +47,9 @@ export class ReguaLayout extends LayoutBase {
     } else {
       escreverLinha(this.contexto, this.separador(camposInicio(info), posicao));
     }
-    this.iniciarIndicador(`${idDaTask(info.arquivo)} ${posicao}`);
+    // Rotulo completo de RF-008: a duracao humana vem em ultimo, acrescida
+    // pelo indicador (task-2).
+    this.iniciarIndicador(camposInicio(info));
   }
 
   taskEnd(info: TaskEndInfo): void {

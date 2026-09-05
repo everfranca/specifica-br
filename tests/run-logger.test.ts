@@ -164,3 +164,121 @@ test('readPreviousRuns le apenas as 100 execucoes mais recentes', async () => {
   assert.ok(tasks.includes('task-003.md'));
   assert.ok(tasks.includes('task-102.md'));
 });
+
+test('os dois eventos novos sao gravados com todos os campos de CT-043', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  const logger = new RunLoggerService();
+  await logger.open(logsDir, 'RID');
+  await logger.logEvent({
+    event: 'aguardando_limite',
+    ts: '',
+    task: 'task-7.md',
+    tentativa: 1,
+    origem_horario: 'informado',
+    renovacao_prevista: '2026-09-05T00:00:00.000Z',
+    espera_planejada_segundos: 6387,
+    espera_acumulada_segundos_antes: 0,
+    teto_espera_segundos: 21600,
+  });
+  await logger.logEvent({
+    event: 'retomada',
+    ts: '',
+    task: 'task-7.md',
+    tentativa: 2,
+    espera_efetiva_segundos: 6387,
+    espera_acumulada_segundos_depois: 6387,
+    janela_renovada: true,
+  });
+  await logger.close();
+
+  const linhas = (await fs.readFile(path.join(logsDir, 'run_RID.jsonl'), 'utf-8'))
+    .split('\n')
+    .filter(Boolean)
+    .map((linha) => JSON.parse(linha));
+
+  assert.deepStrictEqual(
+    Object.keys(linhas[0]).sort(),
+    [
+      'espera_acumulada_segundos_antes',
+      'espera_planejada_segundos',
+      'event',
+      'origem_horario',
+      'renovacao_prevista',
+      'task',
+      'tentativa',
+      'teto_espera_segundos',
+      'ts',
+    ]
+  );
+  assert.deepStrictEqual(
+    Object.keys(linhas[1]).sort(),
+    [
+      'espera_acumulada_segundos_depois',
+      'espera_efetiva_segundos',
+      'event',
+      'janela_renovada',
+      'task',
+      'tentativa',
+      'ts',
+    ]
+  );
+
+  // Duracoes numericas e cruas, nunca em forma humana.
+  assert.strictEqual(typeof linhas[0].espera_planejada_segundos, 'number');
+  assert.strictEqual(typeof linhas[0].teto_espera_segundos, 'number');
+  assert.strictEqual(typeof linhas[1].espera_efetiva_segundos, 'number');
+  assert.strictEqual(linhas[1].janela_renovada, true);
+});
+
+test('os campos novos de rate_limited convivem com os vigentes, sem remocao nem renomeacao', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  const logger = new RunLoggerService();
+  await logger.open(logsDir, 'RID');
+  await logger.logEvent({
+    event: 'rate_limited',
+    ts: '',
+    task: 'task-7.md',
+    tentativa: 1,
+    renovacao_prevista: null,
+    origem_horario: 'sondagem',
+    contexto: 'task',
+  });
+  await logger.close();
+
+  const linha = JSON.parse(
+    (await fs.readFile(path.join(logsDir, 'run_RID.jsonl'), 'utf-8')).split('\n')[0]
+  );
+
+  assert.strictEqual(linha.event, 'rate_limited');
+  assert.strictEqual(linha.task, 'task-7.md');
+  assert.strictEqual(linha.renovacao_prevista, null);
+  assert.strictEqual(linha.contexto, 'task');
+});
+
+test('o texto bruto da ferramenta nao aparece no .jsonl da espera', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  const logger = new RunLoggerService();
+  await logger.open(logsDir, 'RID');
+
+  const bruto = 'Claude usage limit reached for account conta-secreta-123';
+  logger.appendStderr(`${bruto}\n`);
+  await logger.logEvent({
+    event: 'aguardando_limite',
+    ts: '',
+    task: 'task-7.md',
+    tentativa: 1,
+    origem_horario: 'informado',
+    renovacao_prevista: '2026-09-05T00:00:00.000Z',
+    espera_planejada_segundos: 60,
+    espera_acumulada_segundos_antes: 0,
+    teto_espera_segundos: 21600,
+  });
+  await logger.close();
+
+  const jsonl = await fs.readFile(path.join(logsDir, 'run_RID.jsonl'), 'utf-8');
+  assert.ok(!jsonl.includes('conta-secreta-123'));
+  assert.ok(!jsonl.includes('usage limit'));
+  assert.ok(
+    (await fs.readFile(path.join(logsDir, 'run_RID.stderr'), 'utf-8')).includes('conta-secreta-123')
+  );
+});

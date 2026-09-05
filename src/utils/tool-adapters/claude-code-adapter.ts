@@ -32,6 +32,7 @@ const CAPACIDADES_CLAUDECODE: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: true,
   relatoDeNegacoesDePermissao: true,
   formaDeInjecaoSelecionavel: false,
+  relatoDeModeloEfetivo: true,
 };
 
 interface RespostaClaudeCode {

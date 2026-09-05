@@ -145,18 +145,18 @@ specifica-br help --completo
 Executa **em lote** todos os arquivos `task-*.md` de uma feature, invocando a CLI da ferramenta de IA uma vez por task, na ordem numérica, pulando as que já estão `DONE`.
 
 ```bash
-specifica-br executar-tasks <diretório-da-feature> [opções]
+specifica-br executar-tasks <diretório-da-feature> --model <modelo> --effort <nível> [opções]
 ```
 
 O comando roda **a partir de qualquer diretório de qualquer projeto** e **não copia nenhum arquivo** para dentro do projeto. O único arquivo criado dentro do repositório é `contexto-execucao.md`, escrito pela própria ferramenta de IA; os arquivos de task nunca são modificados.
 
-**Opções (todas com o valor padrão):**
+**Opções (com o valor padrão, quando existe):**
 
 | Opção | Padrão | Descrição |
 |:---|:---|:---|
 | `--tool <slug>` | detectado | Ferramenta de IA: `claudecode`, `cursor`, `gemini-cli`, `kiro`, `opencode` (sem distinção de caixa). Atualiza o registro do projeto. |
-| `--model <modelo>` | `opus` | Modelo da ferramenta. |
-| `--effort <nível>` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`. |
+| `--model <modelo>` | **obrigatória** | Modelo da ferramenta. Não há valor padrão: a opção precisa ser informada em toda invocação. |
+| `--effort <nível>` | **obrigatória** | `low`, `medium`, `high`, `xhigh`, `max`. Não há valor padrão: a opção precisa ser informada em toda invocação. |
 | `--fallback-model <modelo>` | `''` | Modelo de fallback. |
 | `--auto-approve` | `false` | Concede acesso total, sem prompts de permissão. |
 | `--permission-mode <modo>` | `''` | `acceptEdits`, `auto`, `dontAsk`, `manual`, `bypassPermissions`. |
@@ -168,8 +168,8 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `--no-cache-tuning` | ligado | Desliga a otimização de cache do prompt. |
 | `--no-context-pack` | ligado | Não constrói nem injeta o Contexto de Execução. |
 | `--context-injection <forma>` | `prompt` | Forma de injeção do Contexto de Execução: `prompt` concatena o destilado ao prompt da task; `instructions` declara o caminho do destilado na definição do agente de execução. Só tem efeito no OpenCode. |
-| `--pack-model <modelo>` | `opus` | Modelo da construção do Contexto de Execução. |
-| `--pack-effort <nível>` | `low` | Esforço da construção do Contexto de Execução. |
+| `--max-wait <duração>` | `6h` | Teto de espera acumulada pela renovação da cota, somando todas as esperas de todas as tasks do lote. Aceita segundos (`90`), minutos (`30m`), horas (`6h`) e a forma composta (`1h30m`). O teto absoluto é de 12 horas. |
+| `--no-wait-on-limit` | espera ligada | Não aguarda a renovação da cota: encerra o lote no primeiro limite de uso. |
 | `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
 | `--tasks <seleção>` | `''` | Seleção de tasks, ex.: `1-3,7`. |
 | `--allow <regra>` | `[]` | Regra adicional de `--allowedTools` (repetível). |
@@ -192,6 +192,8 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `moldura` | Cada task dentro de uma moldura, com os campos de início e de consumo destacados. |
 | `regua` | Uma régua horizontal separando as tasks, com os mesmos campos de `coluna`. |
 | `lote` | Visão condensada do lote inteiro. **Sem terminal interativo cai para `coluna`.** |
+
+**Estilo do cabeçalho** (preferência por máquina, escolhida em `specifica-br config`): o cabeçalho de abertura do lote é apresentado em uma de três formas — `painel`, um quadro emoldurado; `regua`, blocos separados por uma régua horizontal; e `compacto`, uma linha condensada. O padrão é `painel`. A escolha é independente do layout e vale para todos os projetos da máquina. Não há opção de linha de comando para trocar o estilo numa execução isolada.
 
 **Dependências externas obrigatórias:** a CLI da ferramenta de IA no PATH e o comando `/executar-task` instalado para ela (`specifica-br init`). **Nenhum utilitário de shell** — interpretador de comandos, processador de JSON, calculadora ou formatador de colunas — é exigido, em nenhum sistema operacional.
 
@@ -233,13 +235,18 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 
 ### `specifica-br config`
 
-Exibe e altera duas preferências gravadas em `~/.specifica-br/config.json`: o **layout** (preferência única por máquina, vale para todos os projetos) e a **ferramenta de IA** (registrada **por projeto**). O padrão de layout é `coluna`.
+Exibe e altera três preferências gravadas em `~/.specifica-br/config.json`: o **layout** e o **estilo de cabeçalho** (preferências únicas por máquina, valem para todos os projetos) e a **ferramenta de IA** (registrada **por projeto**). O padrão de layout é `coluna` e o padrão de cabeçalho é `painel`.
+
+Sem argumentos, o comando exibe a configuração vigente e abre **duas seleções interativas em sequência**: primeiro o layout, com pré-visualização dos quatro; depois o estilo do cabeçalho, com pré-visualização das três formas. Cada seleção marca o valor em vigor, e sair de uma delas preserva o valor já gravado.
 
 ```bash
-specifica-br config                       # exibe a configuração e abre a seleção de layout com pré-visualização dos quatro
+specifica-br config                       # exibe a configuração e abre a seleção de layout e, em seguida, a de cabeçalho
 specifica-br config layout <nome>         # grava o layout, sem interação
+specifica-br config cabecalho <estilo>    # grava o estilo do cabeçalho: painel, regua ou compacto, sem interação
 specifica-br config ferramenta <slug>     # grava a ferramenta do projeto atual, sem interação
 ```
+
+O estilo do cabeçalho decide como o comando `executar-tasks` apresenta os dados de abertura do lote, em uma de três formas: `painel`, um quadro emoldurado, que é o padrão; `regua`, blocos separados por uma régua horizontal; e `compacto`, uma linha condensada. A escolha é independente do layout.
 
 Sem terminal interativo, `specifica-br config` sem argumentos apenas exibe a configuração vigente e encerra. **Não há configuração dentro do repositório do usuário**, nem opção de linha de comando para trocar o layout numa execução isolada.
 
@@ -543,7 +550,7 @@ Implementa cada tarefa individualmente seguindo a especificação.
 Para rodar todas as tasks de uma feature de uma vez, sem invocar a ferramenta de IA task a task manualmente, use a forma em lote:
 
 ```bash
-specifica-br executar-tasks [diretório da feature]
+specifica-br executar-tasks [diretório da feature] --model <modelo> --effort <nível>
 ```
 
 Ela percorre os `task-*.md` na ordem numérica, pula os que já estão `DONE`, grava os registros em `~/.specifica-br/logs/<projeto>/` e não escreve nada dentro do projeto. Ver `specifica-br executar-tasks` em **Comandos Básicos** para todas as opções.
@@ -644,8 +651,8 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
-- `executar-tasks`: `--tool`, `--model` (`opus`), `--effort` (`medium`), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--pack-model` (`opus`), `--pack-effort` (`low`), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
-- `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout; `config layout <nome>` e `config ferramenta <slug>` gravam sem interação
+- `executar-tasks`: `--tool`, `--model` (**obrigatória**), `--effort` (**obrigatória**), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--max-wait` (`6h`), `--no-wait-on-limit` (espera ligada), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
+- `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout seguida da seleção de estilo de cabeçalho; `config layout <nome>`, `config cabecalho <estilo>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento
 

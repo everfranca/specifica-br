@@ -31,6 +31,13 @@ export const GLYPH = Object.freeze({
 
 export type GlyphLevel = typeof GLYPH[keyof typeof GLYPH];
 
+/**
+ * Os dois estados do indicador de andamento (RF-008, RF-022). Uniao literal, e
+ * nunca uma `string` solta: o conjunto de quadros, o intervalo e a cor do
+ * quadro sao decididos por ele, e um valor fora da uniao nao deve existir.
+ */
+export type SpinnerEstado = 'executando' | 'aguardando';
+
 /** Os quatro estados de operacao comunicados pelos rotulos de sete colunas. */
 export type StatusKind = 'ok' | 'aviso' | 'erro' | 'info';
 

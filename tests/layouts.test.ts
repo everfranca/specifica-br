@@ -16,7 +16,15 @@ import type {
   TaskStartInfo,
   TaskEndInfo,
 } from '../dist/utils/layouts/index.js';
-import { camposConsumo } from '../dist/utils/layouts/coluna.js';
+import { camposConsumo, linhasDeTempoDoResumo, linhaDeEvidencia } from '../dist/utils/layouts/coluna.js';
+import type { EstadoDeEspera } from '../dist/types/executar-tasks.js';
+import {
+  buildPreview,
+  buildHeaderPreview,
+  DADOS_DE_EXEMPLO,
+} from '../dist/utils/layout-preview.js';
+import { renderCabecalho } from '../dist/utils/cabecalho/index.js';
+import type { HeaderStyle } from '../dist/types/config.js';
 import { createPainter, LEVEL, GLYPH, visibleWidth } from '../dist/utils/terminal/index.js';
 import type { GlyphLevel } from '../dist/utils/terminal/index.js';
 import type { LayoutName } from '../dist/types/config.js';
@@ -48,6 +56,7 @@ interface CtxOpts {
   largura?: number;
   glyphLevel?: GlyphLevel;
   cor?: boolean;
+  estiloCabecalho?: HeaderStyle;
 }
 
 function fazerCtx(opts: CtxOpts = {}): { contexto: LayoutContext; stream: FakeStream } {
@@ -58,6 +67,7 @@ function fazerCtx(opts: CtxOpts = {}): { contexto: LayoutContext; stream: FakeSt
     isTTY: opts.isTTY ?? false,
     largura: opts.largura ?? 100,
     stream: stream as unknown as NodeJS.WritableStream,
+    estiloCabecalho: opts.estiloCabecalho ?? 'painel',
   };
   return { contexto, stream };
 }
@@ -93,7 +103,7 @@ function semAnsi(s: string): string {
 }
 
 function rodarStartEnd(layout: LayoutRenderer): void {
-  layout.header(['cabecalho']);
+  layout.header(DADOS_DE_EXEMPLO);
   layout.taskStart(START);
   layout.taskEnd(END);
   layout.summary(['resumo']);
@@ -148,11 +158,11 @@ test('os quatro layouts emitem os mesmos dados de estado e de consumo', () => {
     'sonnet',
     'medium',
     'ctx:sim',
-    '[  OK ]',
-    'tokens=1034600',
+    '[OK]',
+    'tokens=1.034.600',
     'custo=$1.2346',
     'turnos=34',
-    'dur=514s',
+    'tempo=8m 34s',
     'rac=n/d',
     'neg=0',
   ];
@@ -170,15 +180,17 @@ test('os quatro layouts emitem os mesmos dados de estado e de consumo', () => {
 });
 
 // 8
-test('o rotulo de estado tem sete colunas visiveis nos quatro layouts', () => {
-  assert.equal(visibleWidth('[  OK ]'), 7);
+test('o rotulo de estado sai por extenso e na calha de sete colunas nos quatro layouts', () => {
+  assert.equal(visibleWidth('[OK]' + ' '.repeat(3)), 7);
   for (const nome of NOMES) {
     const { contexto, stream } = fazerCtx({ isTTY: false });
     const layout =
       nome === 'lote' ? new LoteLayout(contexto) : createLayout(nome, contexto);
     layout.taskStart(START);
     layout.taskEnd(END);
-    assert.ok(semAnsi(stream.writes.join('')).includes('[  OK ]'), nome);
+    const saida = semAnsi(stream.writes.join(''));
+    assert.ok(saida.includes('[OK]'), nome);
+    assert.ok(!saida.includes('[  OK '), `${nome} manteve o preenchimento interno`);
   }
 });
 
@@ -191,7 +203,7 @@ test('com TTY, o layout coluna substitui o indicador na mesma linha', () => {
     layout.taskEnd(END);
     const juntas = stream.writes.join('');
     assert.ok(juntas.includes('\r\x1b[2K'));
-    assert.ok(semAnsi(juntas).includes('tokens=1034600'));
+    assert.ok(semAnsi(juntas).includes('tokens=1.034.600'));
     layout.dispose();
   });
 });
@@ -397,7 +409,7 @@ test('com TTY, moldura, regua e coluna exibem indicador animado com tempo decorr
 
       layout.taskEnd(END);
       const total = semAnsi(stream.writes.join(''));
-      assert.ok(total.includes('tokens=1034600'), `${nome} sem numeros de consumo`);
+      assert.ok(total.includes('tokens=1.034.600'), `${nome} sem numeros de consumo`);
       assert.ok(stream.writes.join('').includes('\x1b[?25h'), `${nome} nao devolveu o cursor`);
     }
   });
@@ -454,5 +466,259 @@ test('os quatro layouts exibem n/d quando os contadores nao sao reportados', () 
     const saida = semAnsi(stream.writes.join(''));
     assert.ok(saida.includes('rac=n/d'), `${nome} sem rac=n/d`);
     assert.ok(saida.includes('neg=n/d'), `${nome} sem neg=n/d`);
+  }
+});
+
+const ESPERA_CONHECIDA: EstadoDeEspera = {
+  natureza: 'renovacao_conhecida',
+  restanteSegundos: 3870,
+  retomadaEm: new Date(2026, 8, 4, 15, 12, 0),
+  task: 'task-7.md',
+  posicao: 3,
+  total: 12,
+  tentativa: 2,
+};
+
+const ESPERA_SONDAGEM: EstadoDeEspera = {
+  ...ESPERA_CONHECIDA,
+  natureza: 'sondagem',
+  restanteSegundos: 277,
+  retomadaEm: new Date(2026, 8, 4, 14, 13, 0),
+};
+
+test('o mesmo DadosDeAbertura produz o mesmo cabecalho nos quatro layouts, e trocar o estilo troca a forma nos quatro', () => {
+  const ESTILOS: HeaderStyle[] = ['painel', 'regua', 'compacto'];
+  for (const estilo of ESTILOS) {
+    const saidas: string[] = [];
+    for (const nome of NOMES) {
+      const { contexto, stream } = fazerCtx({
+        isTTY: false,
+        largura: 100,
+        estiloCabecalho: estilo,
+      });
+      const layout =
+        nome === 'lote' ? new LoteLayout(contexto) : createLayout(nome, contexto);
+      layout.header(DADOS_DE_EXEMPLO);
+      layout.dispose();
+      saidas.push(stream.writes.join(''));
+    }
+    for (const saida of saidas.slice(1)) {
+      assert.equal(saida, saidas[0], `estilo ${estilo} divergiu entre layouts`);
+    }
+  }
+
+  const formas = ESTILOS.map((estilo) => {
+    const { contexto, stream } = fazerCtx({
+      isTTY: false,
+      largura: 100,
+      estiloCabecalho: estilo,
+    });
+    createLayout('coluna', contexto).header(DADOS_DE_EXEMPLO);
+    return stream.writes.join('');
+  });
+  assert.equal(new Set(formas).size, 3, 'os tres estilos deveriam produzir formas distintas');
+});
+
+test('a linha de fim apresenta tempo, tokens, custo, turnos, raciocinio e negacoes nessa ordem nos quatro layouts', () => {
+  const fim = {
+    ...END,
+    wallSeconds: 72,
+    tokensDaTask: 82000,
+    custoDaTaskUsd: 0.1234,
+    reasoningTokens: null,
+  };
+  const campos = [
+    'tempo=1m 12s',
+    'tokens=82.000',
+    'custo=$0.1234',
+    'turnos=34',
+    'rac=n/d',
+    'neg=0',
+  ];
+  for (const nome of NOMES) {
+    const { contexto, stream } = fazerCtx({ isTTY: false, largura: 100 });
+    const layout =
+      nome === 'lote' ? new LoteLayout(contexto) : createLayout(nome, contexto);
+    layout.taskStart(START);
+    layout.taskEnd(fim);
+    const saida = semAnsi(stream.writes.join(''));
+    const posicoes = campos.map((campo) => saida.indexOf(campo));
+    for (const [i, pos] of posicoes.entries()) {
+      assert.ok(pos >= 0, `${nome} sem ${campos[i]}`);
+      if (i > 0) {
+        assert.ok(pos > posicoes[i - 1], `${nome}: ${campos[i]} fora de ordem`);
+      }
+    }
+  }
+});
+
+test('o resumo apresenta Tempo total sempre e Tempo em espera apenas quando o acumulado e maior que zero', () => {
+  assert.deepEqual(linhasDeTempoDoResumo(3870, 0), ['  Tempo total        1h 04m']);
+  assert.deepEqual(linhasDeTempoDoResumo(3870, 8100), [
+    '  Tempo total        1h 04m',
+    '  Tempo em espera    2h 15m',
+  ]);
+});
+
+test('cada evidencia apresenta o tempo da respectiva task em primeiro lugar', () => {
+  const linha = linhaDeEvidencia({
+    arquivo: 'task-1.md',
+    tempoSegundos: 242,
+    sessionId: '7f3a...',
+    tokens: 482100,
+    turnos: 34,
+    negacoes: 0,
+    usouContexto: true,
+  });
+  assert.ok(linha.startsWith('    task-1  tempo=4m 02s  '), linha);
+  assert.ok(linha.includes('sessao=7f3a...'), linha);
+  assert.ok(linha.includes('tokens=482.100'), linha);
+  assert.ok(linha.includes('neg=0'), linha);
+  assert.ok(linha.includes('ctx=sim'), linha);
+});
+
+test('a linha de espera apresenta tempo restante e horario absoluto com renovacao conhecida, e proxima sondagem quando desconhecida', () => {
+  semCI(() => {
+    const { contexto, stream } = fazerCtx({ isTTY: true });
+    const layout = createLayout('coluna', contexto);
+    layout.waitStart(ESPERA_CONHECIDA);
+    layout.waitUpdate(ESPERA_CONHECIDA);
+    layout.waitEnd(6387);
+    layout.dispose();
+    const saida = semAnsi(stream.writes.join(''));
+    assert.ok(saida.includes('aguardando renovacao da cota'), saida);
+    assert.ok(saida.includes('falta 1h 04m'), saida);
+    assert.ok(saida.includes('retoma 15:12'), saida);
+    assert.ok(saida.includes('task-7 [3/12]'), saida);
+    assert.ok(saida.includes('espera de 1h 46m'), saida);
+  });
+
+  semCI(() => {
+    const { contexto, stream } = fazerCtx({ isTTY: true });
+    const layout = createLayout('coluna', contexto);
+    layout.waitStart(ESPERA_SONDAGEM);
+    layout.waitUpdate(ESPERA_SONDAGEM);
+    layout.dispose();
+    const saida = semAnsi(stream.writes.join(''));
+    assert.ok(saida.includes('proxima sondagem em 4m 37s'), saida);
+    assert.ok(saida.includes('retoma 14:13'), saida);
+  });
+});
+
+test('fora de TTY, os metodos de espera escrevem linhas de texto sem nenhuma sequencia de animacao', () => {
+  const { contexto, stream } = fazerCtx({ isTTY: false });
+  const layout = createLayout('coluna', contexto);
+  layout.waitStart(ESPERA_CONHECIDA);
+  layout.waitUpdate(ESPERA_CONHECIDA);
+  layout.waitEnd(6387);
+  layout.dispose();
+  const juntas = stream.writes.join('');
+  assert.ok(juntas.includes('aguardando renovacao da cota'), juntas);
+  assert.ok(juntas.includes('retomada as '), juntas);
+  assert.ok(juntas.includes('espera de 1h 46m'), juntas);
+  for (const escrita of stream.writes) {
+    assert.ok(!escrita.includes('\r'), 'retorno de carro fora de TTY');
+    assert.ok(!escrita.includes('\x1b[?25l'), 'ocultou o cursor fora de TTY');
+    assert.ok(!escrita.includes('\x1b[2K'), 'limpou linha fora de TTY');
+  }
+});
+
+test('em LoteLayout, os tres metodos de espera encerram o bloco antes de escrever', () => {
+  semCI(() => {
+    const acoes: Array<{ agir: (layout: LoteLayout) => void; marca: string }> = [
+      { agir: (layout) => layout.waitStart(ESPERA_CONHECIDA), marca: 'aguardando renovacao da cota' },
+      { agir: (layout) => layout.waitUpdate(ESPERA_CONHECIDA), marca: 'aguardando renovacao da cota' },
+      { agir: (layout) => layout.waitEnd(6387), marca: 'retomada as ' },
+    ];
+    for (const { agir, marca } of acoes) {
+      const { contexto, stream } = fazerCtx({ isTTY: true, largura: 100 });
+      const layout = new LoteLayout(contexto);
+      layout.taskStart(START);
+      agir(layout);
+      const idx = stream.writes.findIndex((escrita) => escrita.includes(marca));
+      assert.ok(idx > 0, `linha com "${marca}" nao foi escrita`);
+      const quebra = stream.writes.lastIndexOf('\n', idx - 1);
+      assert.ok(quebra >= 0, 'o bloco de altura fixa nao foi encerrado antes de escrever');
+      for (const escrita of stream.writes.slice(quebra + 1, idx)) {
+        assert.ok(
+          !/\x1b\[\d+A/.test(escrita),
+          'o bloco foi redesenhado depois de encerrado',
+        );
+      }
+      layout.dispose();
+    }
+  });
+});
+
+/**
+ * Pre-visualizacoes de `config` (RF-007). Ambiente fixo: sem cor e em ASCII, para
+ * que a comparacao seja textual e nao dependa do terminal de quem roda a suite.
+ */
+const BASE_PREVIA = {
+  painter: painterNone,
+  glyphLevel: GLYPH.ASCII,
+  largura: 72,
+};
+
+const ESTILOS_DE_CABECALHO: HeaderStyle[] = ['painel', 'regua', 'compacto'];
+const NOMES_DE_LAYOUT: LayoutName[] = ['coluna', 'moldura', 'regua', 'lote'];
+
+test('cada uma das tres opcoes de estilo mostra o cabecalho na sua forma', () => {
+  const formas = ESTILOS_DE_CABECALHO.map((estilo) =>
+    buildHeaderPreview(estilo, BASE_PREVIA).join('\n')
+  );
+
+  for (const [i, estilo] of ESTILOS_DE_CABECALHO.entries()) {
+    const esperado = renderCabecalho(estilo, DADOS_DE_EXEMPLO, BASE_PREVIA).join('\n');
+    assert.equal(formas[i], esperado, `previa do estilo ${estilo} diverge de renderCabecalho`);
+    assert.ok(formas[i].includes(DADOS_DE_EXEMPLO.feature), `estilo ${estilo} sem a feature`);
+  }
+
+  assert.equal(new Set(formas).size, 3, 'as tres formas deveriam ser distintas');
+});
+
+test('cada uma das quatro opcoes de layout mostra o cabecalho seguido das linhas de task', () => {
+  for (const nome of NOMES_DE_LAYOUT) {
+    const cabecalho = buildHeaderPreview('painel', BASE_PREVIA);
+    const previa = buildPreview(nome, { ...BASE_PREVIA, cabecalho: 'painel' });
+
+    assert.deepEqual(
+      previa.slice(0, cabecalho.length),
+      cabecalho,
+      `previa do layout ${nome} nao comeca pelo cabecalho`
+    );
+    assert.ok(
+      previa.length > cabecalho.length,
+      `previa do layout ${nome} nao tem linhas de task depois do cabecalho`
+    );
+    assert.ok(
+      previa.slice(cabecalho.length).join('\n').includes('task-1'),
+      `previa do layout ${nome} sem as linhas de task`
+    );
+  }
+});
+
+test('a previa de layout usa o estilo de cabecalho recebido', () => {
+  for (const estilo of ESTILOS_DE_CABECALHO) {
+    const previa = buildPreview('coluna', { ...BASE_PREVIA, cabecalho: estilo });
+    const cabecalho = buildHeaderPreview(estilo, BASE_PREVIA);
+    assert.deepEqual(previa.slice(0, cabecalho.length), cabecalho, `estilo ${estilo}`);
+  }
+});
+
+test('as duas previas usam a mesma constante de dados de exemplo', () => {
+  // 100 colunas: o teto de `larguraUtil`, onde nenhum valor longo e truncado.
+  const larga = { ...BASE_PREVIA, largura: 100 };
+  const doEstilo = buildHeaderPreview('regua', larga).join('\n');
+  const doLayout = buildPreview('regua', { ...larga, cabecalho: 'regua' }).join('\n');
+
+  for (const valor of [
+    DADOS_DE_EXEMPLO.feature,
+    DADOS_DE_EXEMPLO.criterioDeSelecao,
+    DADOS_DE_EXEMPLO.permissoes,
+    DADOS_DE_EXEMPLO.registroPath,
+  ]) {
+    assert.ok(doEstilo.includes(valor), `previa de estilo sem ${valor}`);
+    assert.ok(doLayout.includes(valor), `previa de layout sem ${valor}`);
   }
 });

@@ -1,7 +1,6 @@
 import type { RunAccounting } from '../types/executar-tasks.js';
 import type { TaskResult } from '../types/tool-adapter.js';
-
-const FORMATADOR_MILHAR = new Intl.NumberFormat('pt-BR');
+import { formatarMilhar } from './formatos.js';
 
 /**
  * Acumula os quatro contadores de token e o custo da execucao e formata numeros
@@ -12,6 +11,13 @@ const FORMATADOR_MILHAR = new Intl.NumberFormat('pt-BR');
  */
 class AccountingService {
   private raciocinioReportadoAlgumaVez = false;
+
+  /**
+   * Marco a partir do qual a janela de execucao e medida (RF-019). Comeca em
+   * `0` e passa a valer o acumulado corrente a cada renovacao da cota. E estado
+   * interno: nenhum chamador o escreve, e a leitura sai por `tokensDaJanela`.
+   */
+  private linhaDeBaseDaJanela = 0;
 
   private readonly acumulado: RunAccounting = {
     inputTokens: 0,
@@ -90,17 +96,40 @@ class AccountingService {
    * `printf "%'d"` e a funcao `milhar` em jq (secao 5.1).
    */
   public formatMilhar(inteiro: number): string {
-    return FORMATADOR_MILHAR.format(inteiro);
+    return formatarMilhar(inteiro);
+  }
+
+  /**
+   * Tokens gastos desde a ultima renovacao da janela (RF-019). E a unica base
+   * valida para a trava de janela e para os campos `tokens_disponiveis_*`: o
+   * acumulado bruto continua descrevendo o lote inteiro e alimenta o resumo.
+   */
+  public get tokensDaJanela(): number {
+    return this.acumulado.tokensGastosAcumulado - this.linhaDeBaseDaJanela;
+  }
+
+  /**
+   * Zera a medicao da janela de execucao, acompanhando a renovacao da cota do
+   * provedor (RF-019). Chamado apenas na retomada apos uma espera bem-sucedida.
+   *
+   * Os totais de tokens, custo e tempo do resumo e do `run_end` NAO sao
+   * afetados: continuam somando o lote inteiro (Nota de Decisao D7).
+   */
+  public renovarJanelaDeExecucao(): void {
+    this.linhaDeBaseDaJanela = this.acumulado.tokensGastosAcumulado;
   }
 
   /**
    * Indica se a janela de orcamento ja foi alcancada. Consultado ANTES de iniciar
    * a proxima task, nunca no meio dela (RF-008). O servico nao interrompe nada.
    *
+   * A comparacao e feita contra a linha de base da janela, e nao contra o
+   * acumulado bruto (RF-019).
+   *
    * @param windowBudgetTokens Teto da janela; `0` desliga a trava.
    */
   public excederiaJanela(windowBudgetTokens: number): boolean {
-    return windowBudgetTokens > 0 && this.acumulado.tokensGastosAcumulado >= windowBudgetTokens;
+    return windowBudgetTokens > 0 && this.tokensDaJanela >= windowBudgetTokens;
   }
 }
 

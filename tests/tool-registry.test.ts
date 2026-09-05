@@ -86,6 +86,7 @@ test('opencode declara as treze capacidades de CT-038', () => {
     otimizacaoDeCacheDePrompt: false,
     relatoDeNegacoesDePermissao: false,
     formaDeInjecaoSelecionavel: true,
+    relatoDeModeloEfetivo: false,
   });
 });
 
@@ -125,6 +126,7 @@ test('claudecode declara as treze capacidades', () => {
     otimizacaoDeCacheDePrompt: true,
     relatoDeNegacoesDePermissao: true,
     formaDeInjecaoSelecionavel: false,
+    relatoDeModeloEfetivo: true,
   });
 
   const cursor = getCapabilities('cursor');

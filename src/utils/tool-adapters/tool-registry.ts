@@ -28,6 +28,7 @@ const CAPACIDADES_CLAUDECODE: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: true,
   relatoDeNegacoesDePermissao: true,
   formaDeInjecaoSelecionavel: false,
+  relatoDeModeloEfetivo: true,
 };
 
 const CAPACIDADES_OPENCODE: ToolCapabilities = {
@@ -44,6 +45,7 @@ const CAPACIDADES_OPENCODE: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: false,
   relatoDeNegacoesDePermissao: false,
   formaDeInjecaoSelecionavel: true,
+  relatoDeModeloEfetivo: false,
 };
 
 const NENHUMA: ToolCapabilities = {
@@ -60,6 +62,7 @@ const NENHUMA: ToolCapabilities = {
   otimizacaoDeCacheDePrompt: false,
   relatoDeNegacoesDePermissao: false,
   formaDeInjecaoSelecionavel: false,
+  relatoDeModeloEfetivo: false,
 };
 
 /**

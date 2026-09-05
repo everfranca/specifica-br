@@ -23,5 +23,5 @@ export {
 } from './glyphs.js';
 export type { BoxOpcoes, RuleOpcoes } from './glyphs.js';
 export { banner, signature, status } from './banner.js';
-export { Spinner, QUADROS_SPINNER } from './spinner.js';
-export type { SpinnerOpcoes } from './spinner.js';
+export { Spinner, QUADROS_SPINNER, QUADROS_ESPERA } from './spinner.js';
+export type { SpinnerOpcoes, ConjuntoDeQuadros } from './spinner.js';

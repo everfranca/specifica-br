@@ -14,7 +14,6 @@ import {
   LayoutBase,
   camposInicio,
   linhaFim,
-  idDaTask,
   deveDesmontar,
   utilDoContexto,
   escreverLinha,
@@ -34,7 +33,9 @@ export class MolduraLayout extends LayoutBase {
       });
       this.contexto.stream.write(`${linhas.join('\n')}\n`);
     }
-    this.iniciarIndicador(`${idDaTask(info.arquivo)} [${info.posicao}/${info.total}]`);
+    // Rotulo completo de RF-008: identificador, posicao, modelo, esforco e
+    // contexto — a duracao humana vem em ultimo, acrescida pelo indicador.
+    this.iniciarIndicador(conteudo);
   }
 
   taskEnd(info: TaskEndInfo): void {

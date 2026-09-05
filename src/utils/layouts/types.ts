@@ -10,6 +10,8 @@
  */
 
 import type { Painter, GlyphLevel, StatusKind } from '../terminal/index.js';
+import type { HeaderStyle } from '../../types/config.js';
+import type { DadosDeAbertura, EstadoDeEspera } from '../../types/executar-tasks.js';
 
 /** Informacao entregue ao layout no inicio de uma task. */
 export interface TaskStartInfo {
@@ -50,19 +52,27 @@ export interface LayoutContext {
   isTTY: boolean;
   largura: number;
   stream: NodeJS.WritableStream;
+  estiloCabecalho: HeaderStyle;
 }
 
 /**
- * Interface comum das quatro estrategias. `dispose()` existe para que a task-10
- * garanta a restauracao do terminal em qualquer caminho de encerramento
- * (RNF-004): todo layout que use `Spinner` o para em `dispose()`.
+ * Interface comum das quatro estrategias (CT-046). `dispose()` existe para que
+ * a task-10 garanta a restauracao do terminal em qualquer caminho de
+ * encerramento (RNF-004): todo layout que use `Spinner` o para em `dispose()`.
+ *
+ * `header` recebe dados, nao linhas prontas: a forma e do estilo de cabecalho
+ * configurado, e por isso a implementacao e unica, em `LayoutBase`. O mesmo
+ * vale para os tres metodos de espera.
  */
 export interface LayoutRenderer {
-  header(linhas: string[]): void;
+  header(dados: DadosDeAbertura): void;
   taskStart(info: TaskStartInfo): void;
   taskEnd(info: TaskEndInfo): void;
   taskSkipped(arquivo: string, motivo: string, selecionada: boolean): void;
   message(kind: StatusKind, texto: string): void;
+  waitStart(estado: EstadoDeEspera): void;
+  waitUpdate(estado: EstadoDeEspera): void;
+  waitEnd(esperaEfetivaSegundos: number): void;
   summary(linhas: string[]): void;
   dispose(): void;
 }

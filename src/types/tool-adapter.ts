@@ -15,6 +15,12 @@ export interface ToolCapabilities {
   otimizacaoDeCacheDePrompt: boolean;
   relatoDeNegacoesDePermissao: boolean;
   formaDeInjecaoSelecionavel: boolean;
+  /**
+   * CT-047: a ferramenta relata o modelo que de fato usou, e nao apenas o eco do
+   * solicitado. Governa EXCLUSIVAMENTE o aviso de divergencia de RF-013; nao
+   * desliga a gravacao de `pack_model_efetivo`, que e dado de auditoria.
+   */
+  relatoDeModeloEfetivo: boolean;
 }
 
 export interface TaskResult {

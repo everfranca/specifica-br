@@ -14,6 +14,9 @@
 
 import { status, larguraUtil, Spinner } from '../terminal/index.js';
 import type { Painter, StatusKind } from '../terminal/index.js';
+import { renderCabecalho } from '../cabecalho/index.js';
+import { formatarDuracao, formatarMilhar } from '../formatos.js';
+import type { DadosDeAbertura, EstadoDeEspera } from '../../types/executar-tasks.js';
 import type {
   LayoutContext,
   LayoutRenderer,
@@ -33,6 +36,14 @@ export function naoReportadoOuNumero(valor: number | null): string {
   return valor === null ? 'n/d' : String(valor);
 }
 
+/**
+ * Contador nao reportado com separacao de milhar pt-BR: o raciocinio e
+ * contado em milhares de tokens e le-se melhor agrupado (RF-009).
+ */
+export function naoReportadoOuMilhar(valor: number | null): string {
+  return valor === null ? 'n/d' : formatarMilhar(valor);
+}
+
 /** Identificador da task sem a extensao `.md`. */
 export function idDaTask(arquivo: string): string {
   return arquivo.replace(/\.md$/i, '');
@@ -48,18 +59,19 @@ export function camposInicio(info: TaskStartInfo): string {
 }
 
 /**
- * Numeros de consumo, comuns aos quatro layouts: tokens da task, custo da task,
- * turnos, duracao de parede, tokens de raciocinio e permissoes negadas. Campo
- * que a ferramenta nao reporta sai como `n/d`, nunca como `0`: sao afirmacoes
- * diferentes (RF-004, RF-010).
+ * Numeros de consumo, comuns aos quatro layouts, na ordem obrigatoria de
+ * RF-009: tempo, tokens, custo, turnos, tokens de raciocinio e permissoes
+ * negadas. Tempo em forma humana (RF-004); tokens e raciocinio com separacao
+ * de milhar pt-BR. Campo que a ferramenta nao reporta sai como `n/d`, nunca
+ * como `0`: sao afirmacoes diferentes (RF-004, RF-010).
  */
 export function camposConsumo(info: TaskEndInfo): string {
   return [
-    `tokens=${info.tokensDaTask}`,
+    `tempo=${formatarDuracao(info.wallSeconds)}`,
+    `tokens=${formatarMilhar(info.tokensDaTask)}`,
     `custo=$${info.custoDaTaskUsd.toFixed(4)}`,
     `turnos=${info.numTurns}`,
-    `dur=${info.wallSeconds}s`,
-    `rac=${naoReportadoOuNumero(info.reasoningTokens)}`,
+    `rac=${naoReportadoOuMilhar(info.reasoningTokens)}`,
     `neg=${naoReportadoOuNumero(info.permissionDenials)}`,
   ].join(' ');
 }
@@ -73,6 +85,92 @@ export function linhaFim(info: TaskEndInfo, painter: Painter): string {
   const cert = info.semCertificacao ? ' nao-certificada' : '';
   const texto = `${idDaTask(info.arquivo)} [${info.posicao}/${info.total}]${cert} ${camposConsumo(info)}`;
   return status(info.estado, texto, painter);
+}
+
+/** Horario absoluto `HH:MM`, local, da retomada prevista (RF-022). */
+function horaAbsoluta(instante: Date): string {
+  const hora = String(instante.getHours()).padStart(2, '0');
+  const minuto = String(instante.getMinutes()).padStart(2, '0');
+  return `${hora}:${minuto}`;
+}
+
+/**
+ * Linha do indicador de espera (RF-022), nas duas formas da secao 4.1 da
+ * techspec. As duas apresentam simultaneamente tempo e horario absoluto:
+ * techspec. Renovacao conhecida mostra o tempo restante total; sondagem mostra
+ * o tempo ate a proxima tentativa, com `retoma` apontando para a sondagem. Com
+ * `task === null` (espera na construcao do Contexto de Execucao), o segmento
+ * final nomeia o contexto em vez de uma task.
+ */
+export function linhaDeEspera(estado: EstadoDeEspera): string {
+  const retomada = `retoma ${horaAbsoluta(estado.retomadaEm)}`;
+  const alvo =
+    estado.task === null
+      ? 'contexto de execucao'
+      : `${idDaTask(estado.task)} [${estado.posicao}/${estado.total}]`;
+  const tempo =
+    estado.natureza === 'sondagem'
+      ? `proxima sondagem em ${formatarDuracao(estado.restanteSegundos)}`
+      : `falta ${formatarDuracao(estado.restanteSegundos)}`;
+  return `aguardando renovacao da cota - ${tempo} - ${retomada} - ${alvo}`;
+}
+
+/**
+ * Linha de retomada escrita por `waitEnd` (RF-022): apresenta ao mesmo tempo o
+ * horario absoluto da retomada e a duracao efetiva da espera, em forma humana.
+ */
+export function linhaDeRetomada(
+  esperaEfetivaSegundos: number,
+  agora: Date = new Date(),
+): string {
+  return `retomada as ${horaAbsoluta(agora)} - espera de ${formatarDuracao(esperaEfetivaSegundos)}`;
+}
+
+/**
+ * Linha `rotulo`/`valor` do resumo, com a coluna de rotulo alinhada a das
+ * linhas vigentes (`Motivo`, `Tasks executadas`, ...): 19 colunas.
+ */
+export function linhaDoResumo(rotulo: string, valor: string): string {
+  return `  ${rotulo.padEnd(19)}${valor}`;
+}
+
+/**
+ * Linhas de tempo do resumo final (RF-010): `Tempo total` esta presente em
+ * todo resumo; `Tempo em espera` aparece se e somente se o acumulado for
+ * maior que zero. Os numeros sao produzidos pelo runner — aqui e so a
+ * montagem visual.
+ */
+export function linhasDeTempoDoResumo(
+  tempoTotalSegundos: number,
+  tempoEmEsperaSegundos: number,
+): string[] {
+  const linhas = [linhaDoResumo('Tempo total', formatarDuracao(tempoTotalSegundos))];
+  if (tempoEmEsperaSegundos > 0) {
+    linhas.push(
+      linhaDoResumo('Tempo em espera', formatarDuracao(tempoEmEsperaSegundos)),
+    );
+  }
+  return linhas;
+}
+
+/** Campos de uma linha de evidencia do resumo (RF-010). */
+export interface CamposDeEvidencia {
+  arquivo: string;
+  tempoSegundos: number;
+  sessionId: string;
+  tokens: number;
+  turnos: number;
+  negacoes: number | null;
+  usouContexto: boolean;
+}
+
+/**
+ * Linha de evidencia de task do resumo (RF-010): o tempo daquela task vem em
+ * PRIMEIRO lugar, antes dos campos ja existentes, com tokens em milhar pt-BR.
+ */
+export function linhaDeEvidencia(ev: CamposDeEvidencia): string {
+  const ctx = ev.usouContexto ? 'sim' : 'nao';
+  return `    ${idDaTask(ev.arquivo)}  tempo=${formatarDuracao(ev.tempoSegundos)}  sessao=${ev.sessionId}  tokens=${formatarMilhar(ev.tokens)}  turnos=${ev.turnos}  neg=${naoReportadoOuNumero(ev.negacoes)}  ctx=${ctx}`;
 }
 
 /**
@@ -94,9 +192,9 @@ export function escreverLinha(contexto: LayoutContext, texto: string): void {
 }
 
 /**
- * Base compartilhada: `header`, `summary`, `message` e `taskSkipped` sao
- * identicos nas quatro estrategias, porque nao dependem da forma de apresentar
- * inicio e fim de task.
+ * Base compartilhada: `header`, `summary`, `message`, `taskSkipped` e os tres
+ * metodos de espera sao identicos nas quatro estrategias, porque nao dependem
+ * da forma de apresentar inicio e fim de task (CT-046).
  *
  * O indicador de andamento tambem vive aqui. RF-014 e um requisito do comando,
  * nao do layout `coluna`: em qualquer estrategia de linha, uma task de minutos
@@ -107,9 +205,21 @@ export abstract class LayoutBase implements LayoutRenderer {
   protected readonly contexto: LayoutContext;
   private spinner: Spinner | null = null;
   private spinnerAtivo = false;
+  private rotuloAtivo = '';
 
   constructor(contexto: LayoutContext) {
     this.contexto = contexto;
+  }
+
+  private garantirSpinner(): Spinner {
+    if (!this.spinner) {
+      this.spinner = new Spinner({
+        painter: this.contexto.painter,
+        glyphLevel: this.contexto.glyphLevel,
+        stream: this.contexto.stream as unknown as StreamCompativel,
+      });
+    }
+    return this.spinner;
   }
 
   /**
@@ -120,14 +230,8 @@ export abstract class LayoutBase implements LayoutRenderer {
     if (!this.contexto.isTTY) {
       return;
     }
-    if (!this.spinner) {
-      this.spinner = new Spinner({
-        painter: this.contexto.painter,
-        glyphLevel: this.contexto.glyphLevel,
-        stream: this.contexto.stream as unknown as StreamCompativel,
-      });
-    }
-    this.spinner.start(rotulo);
+    this.rotuloAtivo = rotulo;
+    this.garantirSpinner().start(rotulo);
     this.spinnerAtivo = true;
   }
 
@@ -145,7 +249,14 @@ export abstract class LayoutBase implements LayoutRenderer {
     return true;
   }
 
-  header(linhas: string[]): void {
+  /**
+   * Cabecalho de abertura (RF-005): recebe dados e delega a forma a
+   * `renderCabecalho`, no estilo configurado. Implementacao unica nesta base
+   * porque o estilo nao depende da estrategia — trocar de layout nao altera o
+   * cabecalho.
+   */
+  header(dados: DadosDeAbertura): void {
+    const linhas = renderCabecalho(this.contexto.estiloCabecalho, dados, this.contexto);
     if (linhas.length === 0) {
       return;
     }
@@ -159,8 +270,59 @@ export abstract class LayoutBase implements LayoutRenderer {
     this.contexto.stream.write(`${linhas.join('\n')}\n`);
   }
 
+  /**
+   * Mensagem de estado pelo canal unico (RF-003): o rotulo e montado aqui pela
+   * calha de sete colunas, e o indicador de progresso e encerrado ANTES da
+   * escrita — a mensagem substitui o indicador em vez de se sobrepor a ele.
+   * O rotulo congelado fica no lugar da animacao, preservando a informacao.
+   */
   message(kind: StatusKind, texto: string): void {
+    if (this.spinnerAtivo) {
+      this.pararIndicador(this.rotuloAtivo);
+    }
     escreverLinha(this.contexto, status(kind, texto, this.contexto.painter));
+  }
+
+  /**
+   * Entra em espera (RF-022): troca o indicador de execucao pelo de espera na
+   * mesma linha, ou o inicia quando nao havia task corrente (espera na
+   * construcao do Contexto de Execucao). Fora de TTY nao ha animacao: a linha
+   * de entrada sai como texto (RF-023).
+   */
+  waitStart(estado: EstadoDeEspera): void {
+    const linha = linhaDeEspera(estado);
+    this.rotuloAtivo = linha;
+    if (!this.contexto.isTTY) {
+      escreverLinha(this.contexto, linha);
+      return;
+    }
+    this.garantirSpinner().aguardar(linha);
+    this.spinnerAtivo = true;
+  }
+
+  /**
+   * Atualiza a linha de espera a cada segundo (RF-022). Sem indicador ativo,
+   * escreve a linha como texto (RF-023).
+   */
+  waitUpdate(estado: EstadoDeEspera): void {
+    const linha = linhaDeEspera(estado);
+    this.rotuloAtivo = linha;
+    if (this.spinnerAtivo && this.spinner) {
+      this.spinner.update(linha);
+      return;
+    }
+    escreverLinha(this.contexto, linha);
+  }
+
+  /**
+   * Encerra a espera e escreve a linha de retomada (RF-022), com tempo e
+   * horario absoluto ao mesmo tempo. Fora de TTY, texto puro (RF-023).
+   */
+  waitEnd(esperaEfetivaSegundos: number): void {
+    const linha = linhaDeRetomada(esperaEfetivaSegundos);
+    if (!this.pararIndicador(linha)) {
+      escreverLinha(this.contexto, linha);
+    }
   }
 
   taskSkipped(arquivo: string, motivo: string, selecionada: boolean): void {
