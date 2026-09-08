@@ -47,6 +47,7 @@ function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions 
     maxWait: '6h',
     waitOnLimit: true,
     packMaxTokens: 8000,
+    packTimeout: 900,
     tasks: '',
     allow: [],
     preflight: false,
@@ -55,6 +56,7 @@ function opcoes(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions 
     mcpTimeout: 15,
     mcpCheck: true,
     dryRun: false,
+    yes: false,
     ...over,
   };
 }
@@ -100,6 +102,8 @@ function fakeLayout() {
     message(kind: string, texto: string) {
       mensagens.push([kind, texto]);
     },
+    etapaStart() {},
+    etapaEnd() {},
     waitStart() {},
     waitUpdate() {},
     waitEnd() {},
@@ -141,6 +145,7 @@ function fakeLogger() {
 function fakeContextPack(over: Partial<Record<string, unknown>> = {}) {
   const chamadas = { precisaReconstruir: 0, ensure: 0, abort: 0 };
   const obj = {
+    consumoNaoContabilizadoSegundos: 0,
     async precisaReconstruir() {
       chamadas.precisaReconstruir += 1;
       return { reconstruir: false, motivo: 'em_dia', fonteAlterada: null };
@@ -156,6 +161,7 @@ function fakeContextPack(over: Partial<Record<string, unknown>> = {}) {
         motivo: 'em_dia',
         fonteAlterada: null,
         tokensGastos: 0,
+        duracaoNaoContabilizadaSegundos: 0,
       };
     },
     caminhoParaInjecao() {
@@ -1858,4 +1864,101 @@ test('(caso 28) em --dry-run nenhuma deteccao de limite ocorre', async () => {
   assert.equal(adapter.chamadas.runTask, 0);
   assert.equal(espera.chamadas.length, 0);
   assert.equal(eventos(logger, 'rate_limited').length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Consumo nao contabilizado, resumo do contexto e limite de uso na reconstrucao.
+// ---------------------------------------------------------------------------
+
+/** Desfecho de `ensure` com todos os campos de `PackResult`. */
+function packResult(over: Record<string, unknown> = {}) {
+  return {
+    decisao: 'construido',
+    caminho: null,
+    bytes: 0,
+    estTokens: 0,
+    acimaDoTeto: false,
+    motivo: 'inexistente',
+    fonteAlterada: null,
+    tokensGastos: 0,
+    duracaoNaoContabilizadaSegundos: 0,
+    ...over,
+  };
+}
+
+test('run_end e resumo registram o consumo nao contabilizado de uma construcao morta', async () => {
+  const contextPack = fakeContextPack({ consumoNaoContabilizadoSegundos: 124 });
+  const { runner, layout, logger } = montar({ contextPack });
+
+  runner.registrarPack(packResult({ decisao: 'interrompido', motivo: 'interrompido' }) as never);
+  await runner.encerrar('interrompido_pelo_usuario');
+
+  const runEnd = eventos(logger, 'run_end')[0];
+  assert.equal(runEnd.consumo_nao_contabilizado, true);
+  assert.equal(runEnd.duracao_nao_contabilizada_segundos, 124);
+  assert.ok(
+    layout.resumo?.some((linha) => linha.includes('Nao contabilizado') &&
+        linha.includes('2m 04s') &&
+        linha.includes('nao concluida')),
+    JSON.stringify(layout.resumo)
+  );
+});
+
+test('sem construcao morta o run_end nao afirma consumo nao contabilizado', async () => {
+  const { runner, logger } = montar();
+  await runner.encerrar('fim_da_lista');
+
+  const runEnd = eventos(logger, 'run_end')[0];
+  assert.equal(runEnd.consumo_nao_contabilizado, false);
+  assert.equal(runEnd.duracao_nao_contabilizada_segundos, 0);
+});
+
+test('o resumo distingue sem contexto por opcao de sem contexto por falha', async () => {
+  const porOpcao = montar();
+  porOpcao.runner.registrarPack(
+    packResult({ decisao: 'desligado', motivo: 'desligado' }) as never
+  );
+  await porOpcao.runner.encerrar('fim_da_lista');
+  assert.ok(
+    porOpcao.layout.resumo?.some((l) => l.includes('sem contexto por opcao (--no-context-pack)')),
+    JSON.stringify(porOpcao.layout.resumo)
+  );
+
+  const porFalha = montar();
+  porFalha.runner.registrarPack(
+    packResult({ decisao: 'falhou', motivo: 'arquivo_nao_gerado' }) as never
+  );
+  await porFalha.runner.encerrar('fim_da_lista');
+  assert.ok(
+    porFalha.layout.resumo?.some((l) =>
+      l.includes('sem contexto por falha na construcao (arquivo_nao_gerado)')
+    ),
+    JSON.stringify(porFalha.layout.resumo)
+  );
+});
+
+test('sem desfecho de contexto conhecido o resumo nao inventa a linha', async () => {
+  const { runner, layout } = montar();
+  await runner.encerrar('fim_da_lista');
+  assert.ok(!layout.resumo?.some((l) => l.includes('Contexto ')));
+});
+
+test('limite de uso na reconstrucao entre tasks encerra o lote, sem executar a proxima', async () => {
+  const contextPack = fakeContextPack({
+    async precisaReconstruir() {
+      return { reconstruir: true, motivo: 'fonte_mais_recente', fonteAlterada: '/f/prd.md' };
+    },
+    async ensure() {
+      return packResult({ decisao: 'falhou', motivo: 'limite_de_uso' });
+    },
+  });
+  const adapter = fakeAdapter();
+  const { runner, logger } = montar({ contextPack, adapter });
+
+  const motivo = await runner.run([
+    { arquivo: 'task-1.md', numero: 1, caminho: '/f/task-1.md', done: false, selecionada: true },
+  ]);
+
+  assert.equal(motivo, 'limite_de_uso');
+  assert.equal(eventos(logger, 'start').length, 0, 'uma task foi iniciada mesmo assim');
 });

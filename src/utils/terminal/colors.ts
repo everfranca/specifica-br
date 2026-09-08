@@ -25,6 +25,23 @@ export type { ColorLevel, Painter };
 const RESET = '\x1b[0m';
 
 /**
+ * Niveis do cubo 6x6x6 da paleta xterm-256 (indices 16-231). Usados para
+ * aproximar um RGB escalado no nivel ANSI256, onde nao existe cor arbitraria.
+ */
+const NIVEIS_DO_CUBO = [0, 95, 135, 175, 215, 255] as const;
+
+/** Indice do cubo mais proximo de um canal de 8 bits. */
+function nivelDoCubo(canal: number): number {
+  let maisProximo = 0;
+  for (let indice = 1; indice < NIVEIS_DO_CUBO.length; indice += 1) {
+    if (Math.abs(NIVEIS_DO_CUBO[indice] - canal) < Math.abs(NIVEIS_DO_CUBO[maisProximo] - canal)) {
+      maisProximo = indice;
+    }
+  }
+  return maisProximo;
+}
+
+/**
  * Carrega a paleta canonica de `assets/tokens.json`. A leitura e sincrona e
  * feita uma unica vez na carga do modulo porque acontece fora de qualquer
  * contexto assincrono (import de asset embutido no pacote) e o arquivo tem
@@ -188,9 +205,35 @@ export function createPainter(level: ColorLevel = detectLevel()): Painter {
   const petroleo = corDoPapel('petroleo');
   const muted = corDoPapel('muted');
 
+  // Petroleo escalado por brilho: ponta do scanner em 1, rastro e inativos
+  // abaixo. TRUECOLOR escala o RGB; ANSI256 cai no cubo mais proximo; BASIC
+  // so distingue "forte" (petroleo) de "fraco" (muted, a forma explicita de
+  // "menos importante" da marca); NONE nao envolve nada.
+  const petroleoAjustado = (texto: string, brilho: number): string => {
+    if (level === LEVEL.NONE) {
+      return texto;
+    }
+    const fator = Math.min(1, Math.max(0, brilho));
+    if (fator >= 0.999) {
+      return petroleo(texto);
+    }
+    if (level === LEVEL.TRUECOLOR) {
+      const [r, g, b] = PALETA.petroleo.rgb;
+      return `\x1b[38;2;${Math.round(r * fator)};${Math.round(g * fator)};${Math.round(b * fator)}m${texto}${RESET}`;
+    }
+    if (level === LEVEL.ANSI256) {
+      const [r, g, b] = PALETA.petroleo.rgb;
+      const codigo =
+        16 + 36 * nivelDoCubo(Math.round(r * fator)) + 6 * nivelDoCubo(Math.round(g * fator)) + nivelDoCubo(Math.round(b * fator));
+      return `\x1b[38;5;${codigo}m${texto}${RESET}`;
+    }
+    return fator >= 0.5 ? petroleo(texto) : muted(texto);
+  };
+
   return {
     nivel: level,
     petroleo,
+    petroleoAjustado,
     paprica: corDoPapel('paprica'),
     ok: corDoPapel('success'),
     aviso: corDoPapel('warning'),

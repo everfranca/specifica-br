@@ -3,6 +3,7 @@ import type { EffortLevel, ExecutarTasksOptions } from '../../types/executar-tas
 import type {
   BuildContextPackArgsInput,
   BuildTaskArgsInput,
+  DesfechoDoFilho,
   McpCheckResult,
   TaskResult,
   ToolAdapter,
@@ -298,11 +299,13 @@ export class OpenCodeAdapter implements ToolAdapter {
     exitCode: number,
     rawStdout: string,
     rawStderr: string,
-    contabilidadeParcial: boolean
+    contabilidadeParcial: boolean,
+    subtype = 'parse_error',
+    desfecho: DesfechoDoFilho = {}
   ): TaskResult {
     return {
       sessionId: '?',
-      subtype: 'parse_error',
+      subtype,
       isError: true,
       exitCode,
       numTurns: 0,
@@ -321,6 +324,9 @@ export class OpenCodeAdapter implements ToolAdapter {
       contabilidadeParcial,
       rawStdout,
       rawStderr,
+      signal: desfecho.signal ?? null,
+      aborted: desfecho.aborted === true,
+      timedOut: desfecho.timedOut === true,
     };
   }
 
@@ -332,7 +338,36 @@ export class OpenCodeAdapter implements ToolAdapter {
    * `part.tokens.total` nao e usado: o campo e opcional na ferramenta e um valor
    * ausente zeraria a task. Somam-se os cinco componentes.
    */
-  public parseResult(exitCode: number, rawStdout: string, rawStderr: string): TaskResult {
+  public parseResult(
+    exitCode: number,
+    rawStdout: string,
+    rawStderr: string,
+    desfecho: DesfechoDoFilho = {}
+  ): TaskResult {
+    // CT-049: mesma guarda do adapter de ClaudeCode. Filho morto por sinal, por
+    // cancelamento ou por teto de tempo nunca e normalizado como saida limpa.
+    const morto =
+      desfecho.aborted === true ||
+      desfecho.timedOut === true ||
+      (desfecho.signal ?? null) !== null;
+
+    if (morto) {
+      const subtype =
+        desfecho.aborted === true
+          ? 'interrompido'
+          : desfecho.timedOut === true
+            ? 'timeout'
+            : 'sinal';
+      return this.resultadoDegradado(
+        exitCode === 0 ? -1 : exitCode,
+        rawStdout,
+        rawStderr,
+        false,
+        subtype,
+        desfecho
+      );
+    }
+
     if (exitCode !== 0 && rawStdout.trim() === '') {
       return this.resultadoDegradado(exitCode, rawStdout, rawStderr, false);
     }
@@ -515,7 +550,8 @@ export class OpenCodeAdapter implements ToolAdapter {
     modelo: string,
     cwd: string,
     onStderrChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<TaskResult> {
     this.modeloEmUso = modelo;
 
@@ -525,9 +561,14 @@ export class OpenCodeAdapter implements ToolAdapter {
       stdin: 'ignore',
       onStderrChunk,
       signal,
+      timeoutMs: timeoutMs && timeoutMs > 0 ? timeoutMs : undefined,
     });
 
-    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr);
+    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr, {
+      signal: resultado.signal,
+      aborted: resultado.aborted,
+      timedOut: resultado.timedOut,
+    });
   }
 
   /**
@@ -608,7 +649,8 @@ export class OpenCodeAdapter implements ToolAdapter {
     entrada: BuildContextPackArgsInput,
     cwd: string,
     onStderrChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<TaskResult> {
     const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.packEffort);
 
@@ -617,7 +659,8 @@ export class OpenCodeAdapter implements ToolAdapter {
       entrada.packModel,
       cwd,
       onStderrChunk,
-      signal
+      signal,
+      timeoutMs
     );
 
     if (!this.deveReexecutarSemVariante(resultado, variante)) {

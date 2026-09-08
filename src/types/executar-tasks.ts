@@ -16,7 +16,12 @@ export type ContextInjection = 'prompt' | 'instructions';
  * `desligado` = `--no-context-pack`; `falhou` = construcao nao satisfez as tres
  * condicoes de sucesso de CT-021, mas o lote prossegue sem o destilado.
  */
-export type PackDecisao = 'reaproveitado' | 'construido' | 'falhou' | 'desligado';
+export type PackDecisao =
+  | 'reaproveitado'
+  | 'construido'
+  | 'falhou'
+  | 'desligado'
+  | 'interrompido';
 
 /**
  * Resultado que o `ContextPackService` devolve ao orquestrador (task-10).
@@ -31,6 +36,30 @@ export interface PackResult {
   motivo: string;
   fonteAlterada: string | null;
   tokensGastos: number;
+  /**
+   * Duracao, em segundos, de uma tentativa de construcao morta por SIGTERM
+   * (interrupcao do usuario ou teto de tempo). O consumo dessa tentativa e real
+   * mas nao e relatado por nenhum JSON final: o que se registra e o tempo, para
+   * que o resumo nunca afirme custo zero para um lote que custou dinheiro.
+   * `0` quando nao houve tentativa abortada.
+   */
+  duracaoNaoContabilizadaSegundos: number;
+}
+
+/**
+ * Informacao entregue a apresentacao no inicio de uma etapa longa que NAO e uma
+ * task - hoje, a construcao do Contexto de Execucao (RF-029).
+ *
+ * Mesma disciplina de CT-046 aplicada a `TaskStartInfo`: se um dado nao esta
+ * aqui, nenhum layout pode inventa-lo; se esta, todas as estrategias o exibem.
+ */
+export interface EtapaInfo {
+  /** O que esta acontecendo, em texto curto: `Construindo o Contexto de Execucao`. */
+  rotulo: string;
+  /** Modelo usado na etapa. */
+  model: string;
+  /** Nivel de esforco usado na etapa. */
+  effort: string;
 }
 
 export interface ExecutarTasksOptions {
@@ -51,6 +80,7 @@ export interface ExecutarTasksOptions {
   maxWait: string;
   waitOnLimit: boolean;
   packMaxTokens: number;
+  packTimeout: number;
   tasks: string;
   allow: string[];
   preflight: boolean;
@@ -59,6 +89,7 @@ export interface ExecutarTasksOptions {
   mcpTimeout: number;
   mcpCheck: boolean;
   dryRun: boolean;
+  yes: boolean;
 }
 
 export interface TaskInfo {
@@ -138,7 +169,8 @@ export type RunEndMotivo =
   | 'limite_de_uso'
   | 'falha_na_task'
   | 'preflight_reprovado'
-  | 'interrompido_pelo_usuario';
+  | 'interrompido_pelo_usuario'
+  | 'cancelado_na_confirmacao';
 
 interface TokenCounters {
   input_tokens: number;
@@ -233,6 +265,15 @@ export interface RunEventPackBuild extends TokenCounters {
   tokens_gastos: number;
   tokens_gastos_acumulado_depois: number;
   custo_usd: string;
+  /**
+   * CT-051: a construcao roda com `--permission-mode acceptEdits` e `stdin`
+   * fechado - por decisao, e nao por esquecimento (ver a Nota de Decisao no
+   * techspec). Uma ferramenta nao-edicao de que o prompt precise e negada sem
+   * que nada apareca na tela; estes dois campos, mais o aviso correspondente,
+   * sao o que torna a negacao visivel.
+   */
+  permission_denials: number | null;
+  ferramentas_negadas: string | null;
 }
 
 export interface RunEventPackBuildFailed {
@@ -242,6 +283,21 @@ export interface RunEventPackBuildFailed {
   subtype: string;
   exit_code: number;
   tokens_gastos: number;
+}
+
+/**
+ * Construcao do Contexto de Execucao encerrada por SIGTERM antes de produzir
+ * desfecho (CT-050): interrupcao do usuario ou teto de `--pack-timeout`. E um
+ * evento PROPRIO, e nao um `pack_build_failed`, porque "o arquivo nao foi
+ * gerado" e uma afirmacao falsa sobre um processo que foi morto.
+ */
+export interface RunEventPackBuildInterrompido {
+  event: 'pack_build_interrompido';
+  ts: string;
+  motivo: 'interrompido_pelo_usuario' | 'timeout';
+  duracao_segundos: number;
+  /** Sempre `true`: o consumo da tentativa morta nao chega a contabilidade. */
+  consumo_nao_contabilizado: boolean;
 }
 
 export interface RunEventSkip {
@@ -365,6 +421,18 @@ export interface RunEventInterrompido {
   total_tasks: number;
 }
 
+/**
+ * Desfecho da confirmacao de execucao (RF-025). Gravado uma unica vez, apos a
+ * decisao do usuario ou a decisao de nao perguntar. `motivo_pulo` so e
+ * preenchido com `decisao: 'pulado'`; nos demais e `null`.
+ */
+export interface RunEventConfirmacaoExecucao {
+  event: 'confirmacao_execucao';
+  ts: string;
+  decisao: 'confirmado' | 'recusado' | 'interrompido' | 'pulado';
+  motivo_pulo: 'yes' | 'dry_run' | 'nao_interativo' | null;
+}
+
 export interface RunEventRunEnd {
   event: 'run_end';
   ts: string;
@@ -381,6 +449,14 @@ export interface RunEventRunEnd {
    */
   tempo_total_segundos: number;
   tempo_em_espera_segundos: number;
+  /**
+   * CT-050: houve tentativa de construcao do Contexto de Execucao morta por
+   * SIGTERM, cujo consumo real nao entrou em `tokens_gastos_total` nem em
+   * `custo_total_usd`. `duracao_nao_contabilizada_segundos` e a duracao dessa
+   * tentativa, em segundos.
+   */
+  consumo_nao_contabilizado: boolean;
+  duracao_nao_contabilizada_segundos: number;
 }
 
 export type RunEvent =
@@ -390,6 +466,7 @@ export type RunEvent =
   | RunEventPackReused
   | RunEventPackBuild
   | RunEventPackBuildFailed
+  | RunEventPackBuildInterrompido
   | RunEventSkip
   | RunEventStart
   | RunEventEnd
@@ -398,6 +475,7 @@ export type RunEvent =
   | RunEventAguardandoLimite
   | RunEventRetomada
   | RunEventInterrompido
+  | RunEventConfirmacaoExecucao
   | RunEventRunEnd;
 
 /** Endereco do schema publico da configuracao do OpenCode (CT-035). */

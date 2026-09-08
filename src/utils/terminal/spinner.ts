@@ -9,10 +9,11 @@
  *
  * Executar e esperar sao dois estados visualmente distintos, e essa distincao e
  * o produto: olhando o terminal, o usuario precisa saber se a ferramenta esta
- * trabalhando ou bloqueada por limite de uso. Executar e uma barra pulsante em
- * petroleo a 100 ms; esperar e uma marca unica varrendo devagar, em cor de
- * aviso, a 500 ms. Nunca paprica: a paprica marca acao do usuario, e esperar
- * nao e acao do usuario (cli-movimento.md).
+ * trabalhando ou bloqueada por limite de uso. Executar e um scanner de pixels
+ * em petroleo — ponta clara varrendo ida e volta com rastro que se desfaz — a
+ * 100 ms; esperar e uma marca unica varrendo devagar, em cor de aviso, a
+ * 500 ms. Nunca paprica: a paprica marca acao do usuario, e esperar nao e
+ * acao do usuario (cli-movimento.md).
  */
 
 import { GLYPH } from './types.js';
@@ -28,49 +29,154 @@ const OCULTAR_CURSOR = '\x1b[?25l';
 const RESTAURAR_CURSOR = '\x1b[?25h';
 const LIMPAR_LINHA = '\r\x1b[2K';
 
-/** Largura visivel de todo quadro, nos dois conjuntos e nos tres niveis. */
-const CELULAS = 6;
-/** Largura do pulso da barra de execucao, em celulas. */
-const PULSO = 2;
+/** Largura visivel do quadro de execucao, nos tres niveis de glifo. */
+const CELULAS = 8;
+/** Celulas do rastro entre a ponta e o apagado total. */
+const TAMANHO_DO_RASTRO = 6;
+/** Quadros parado na celula final da ida, desfazendo o rastro. */
+const PAUSA_NO_FIM = 9;
+/** Quadros parado na celula inicial, desfazendo o rastro de volta. */
+const PAUSA_NO_INICIO = 30;
+
+/**
+ * Brilho de cada celula do rastro, da ponta ao fim: 1.0 na ponta, 0.9 no
+ * degrau seguinte e decaimento exponencial de base 0.65 adiante. Celulas
+ * inativas ficam em 0.6. Os valores sao os fatores de alpha do scanner do
+ * OpenCode (`packages/tui/src/ui/spinner.ts`), aqui viram escala de RGB
+ * porque o terminal nao compoe alpha.
+ */
+const BRILHO_DO_RASTRO = Array.from({ length: TAMANHO_DO_RASTRO }, (_, indice) =>
+  indice === 0 ? 1 : indice === 1 ? 0.9 : Math.pow(0.65, indice - 1),
+);
+const BRILHO_INATIVO = 0.6;
 
 /**
  * Conjunto de quadros e intervalo de um estado, para um nivel de glifo.
+ * `tons` e o indice de cor de cada celula de cada quadro (-1 inativo, 0 ponta,
+ * 1..5 rastro) e so existe no conjunto de execucao, o unico pintado celula a
+ * celula.
  */
 export interface ConjuntoDeQuadros {
   quadros: string[];
   intervaloMs: number;
+  tons?: number[][];
+}
+
+interface EstadoDoScanner {
+  posicaoAtiva: number;
+  segurando: boolean;
+  progressoDaPausa: number;
+  indoParaFrente: boolean;
 }
 
 /**
- * Barra pulsante: o pulso percorre ida e volta, gerando 8 quadros. As posicoes
- * sao geradas, e nao digitadas, porque e o que torna estrutural a invariante de
- * RNF-002 — todo quadro tem exatamente `CELULAS` colunas visiveis.
+ * Posicao da ponta do scanner num quadro do ciclo. O ciclo e o do OpenCode:
+ * ida (CELULAS quadros), pausa na celula final desfazendo o rastro
+ * (PAUSA_NO_FIM), volta (CELULAS - 1) e pausa na celula inicial
+ * (PAUSA_NO_INICIO) — 54 quadros no total.
  */
-function quadrosPulsantes(trilho: string, pulso: string): string[] {
-  const posicoes = [0, 1, 2, 3, 4, 3, 2, 1];
-  return posicoes.map((inicio) =>
-    Array.from({ length: CELULAS }, (_, celula) =>
-      celula >= inicio && celula < inicio + PULSO ? pulso : trilho,
-    ).join(''),
-  );
+function estadoDoScanner(
+  quadro: number,
+  totalDeCelulas: number,
+  pausaNoInicio: number,
+  pausaNoFim: number,
+): EstadoDoScanner {
+  const quadrosDeIda = totalDeCelulas;
+  const quadrosDeVolta = totalDeCelulas - 1;
+
+  if (quadro < quadrosDeIda) {
+    return { posicaoAtiva: quadro, segurando: false, progressoDaPausa: 0, indoParaFrente: true };
+  }
+  if (quadro < quadrosDeIda + pausaNoFim) {
+    return {
+      posicaoAtiva: totalDeCelulas - 1,
+      segurando: true,
+      progressoDaPausa: quadro - quadrosDeIda,
+      indoParaFrente: true,
+    };
+  }
+  if (quadro < quadrosDeIda + pausaNoFim + quadrosDeVolta) {
+    const volta = quadro - quadrosDeIda - pausaNoFim;
+    return { posicaoAtiva: totalDeCelulas - 2 - volta, segurando: false, progressoDaPausa: 0, indoParaFrente: false };
+  }
+  return {
+    posicaoAtiva: 0,
+    segurando: true,
+    progressoDaPausa: quadro - quadrosDeIda - pausaNoFim - quadrosDeVolta,
+    indoParaFrente: false,
+  };
+}
+
+/**
+ * Indice de cor de uma celula: 0 na ponta, 1..5 no rastro atras dela, -1
+ * inativo. Durante as pausas o indice inteiro desloca pelo progresso — e isso
+ * que faz o rastro escorrer e a ponta se desfazer pixel a pixel nas
+ * extremidades, em vez de sumir de uma vez.
+ */
+function indiceDeCor(quadro: number, celula: number, estado: EstadoDoScanner): number {
+  const distanciaDirecional = estado.indoParaFrente
+    ? estado.posicaoAtiva - celula
+    : celula - estado.posicaoAtiva;
+
+  if (estado.segurando) {
+    return distanciaDirecional + estado.progressoDaPausa;
+  }
+  if (distanciaDirecional > 0 && distanciaDirecional < TAMANHO_DO_RASTRO) {
+    return distanciaDirecional;
+  }
+  if (distanciaDirecional === 0) {
+    return 0;
+  }
+  return -1;
+}
+
+/**
+ * Quadros do scanner de execucao: ponta, rastro e inativo aplicados celula a
+ * celula. As posicoes sao geradas, e nao digitadas, porque e o que torna
+ * estrutural a invariante de RNF-002 — todo quadro tem exatamente `CELULAS`
+ * colunas visiveis. Sem cor, o decaimento vive no glifo: ponta cheia, rastro
+ * medio, inativo apagado.
+ */
+function quadrosDoScanner(ponta: string, rastro: string, inativo: string): ConjuntoDeQuadros {
+  const totalDeQuadros = CELULAS + PAUSA_NO_FIM + (CELULAS - 1) + PAUSA_NO_INICIO;
+  const quadros: string[] = [];
+  const tons: number[][] = [];
+
+  for (let quadro = 0; quadro < totalDeQuadros; quadro += 1) {
+    const estado = estadoDoScanner(quadro, CELULAS, PAUSA_NO_INICIO, PAUSA_NO_FIM);
+    const glifos: string[] = [];
+    const tonsDoQuadro: number[] = [];
+    for (let celula = 0; celula < CELULAS; celula += 1) {
+      const indice = indiceDeCor(quadro, celula, estado);
+      const ativo = indice >= 0 && indice < TAMANHO_DO_RASTRO;
+      glifos.push(ativo ? (indice === 0 ? ponta : rastro) : inativo);
+      // Fora do rastro o indice bruto pode passar de 5 durante as pausas; e
+      // armazenado ja em -1 para que a tabela so contenha -1 ou 0..5.
+      tonsDoQuadro.push(ativo ? indice : -1);
+    }
+    quadros.push(glifos.join(''));
+    tons.push(tonsDoQuadro);
+  }
+
+  return { quadros, tons, intervaloMs: 100 };
 }
 
 /** Varredura da espera: marca unica da esquerda para a direita, 6 quadros. */
 function quadrosDeVarredura(trilho: string, marca: string): string[] {
-  return Array.from({ length: CELULAS }, (_, posicao) =>
-    Array.from({ length: CELULAS }, (_, celula) => (celula === posicao ? marca : trilho)).join(''),
+  return Array.from({ length: 6 }, (_, posicao) =>
+    Array.from({ length: 6 }, (_, celula) => (celula === posicao ? marca : trilho)).join(''),
   );
 }
 
 /**
- * Indicador de task em execucao (RF-008): barra pulsante de 6 celulas, pulso de
- * 2 celulas em ida e volta, 8 quadros a 100 ms — 10 fps exatos, que e o teto de
- * RNF-002 e nao um numero escolhido por estetica.
+ * Indicador de task em execucao (RF-008): scanner de 8 celulas no estilo do
+ * OpenCode, 54 quadros a 100 ms — 10 fps exatos, que e o teto de RNF-002 e
+ * nao um numero escolhido por estetica. O ciclo completo dura 5,4 s.
  */
 export const QUADROS_SPINNER: Record<GlyphLevel, ConjuntoDeQuadros> = {
-  [GLYPH.ASCII]: { quadros: quadrosPulsantes('-', '='), intervaloMs: 100 },
-  [GLYPH.UNICODE_BOX]: { quadros: quadrosPulsantes('─', '━'), intervaloMs: 100 },
-  [GLYPH.UNICODE_FULL]: { quadros: quadrosPulsantes('░', '█'), intervaloMs: 100 },
+  [GLYPH.ASCII]: quadrosDoScanner('#', '=', '.'),
+  [GLYPH.UNICODE_BOX]: quadrosDoScanner('■', '▪', '·'),
+  [GLYPH.UNICODE_FULL]: quadrosDoScanner('■', '▪', '⬝'),
 };
 
 /**
@@ -247,8 +353,9 @@ export class Spinner {
    * ja vem pronta e o tempo que importa e o que falta, nao o que passou.
    */
   private render(): void {
-    const { quadros } = this.conf;
-    const quadro = quadros[this.indice % quadros.length];
+    const { quadros, tons } = this.conf;
+    const indice = this.indice % quadros.length;
+    const quadro = quadros[indice];
     this.indice += 1;
 
     if (this.estado === 'aguardando') {
@@ -259,12 +366,30 @@ export class Spinner {
     const segundos = Math.floor((Date.now() - this.inicioMs) / 1000);
     this.stream.write(
       LIMPAR_LINHA +
-        this.painter.petroleo(quadro) +
+        this.pintarCelulaACelula(quadro, tons?.[indice]) +
         ' ' +
         this.rotulo +
         ' ' +
         this.painter.muted(formatarDuracao(segundos)),
     );
+  }
+
+  /**
+   * O scanner e pintado celula a celula porque cada uma tem um brilho proprio:
+   * ponta cheia, rastro em decaimento, inativos apagados. Sem a tabela de tons
+   * o quadro e pintado inteiro em petroleo, como qualquer outra forma.
+   */
+  private pintarCelulaACelula(quadro: string, tons: number[] | undefined): string {
+    if (!tons) {
+      return this.painter.petroleo(quadro);
+    }
+    return [...quadro]
+      .map((glifo, celula) => {
+        const indice = tons[celula];
+        const dentroDoRastro = indice >= 0 && indice < BRILHO_DO_RASTRO.length;
+        return this.painter.petroleoAjustado(glifo, dentroDoRastro ? BRILHO_DO_RASTRO[indice] : BRILHO_INATIVO);
+      })
+      .join('');
   }
 
   private ocultarCursor(): void {

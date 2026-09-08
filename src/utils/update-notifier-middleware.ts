@@ -21,13 +21,21 @@ class UpdateNotifierMiddleware {
     return settings.enabledUpgradeCommands.includes(commandName);
   }
 
-  private async getLatestVersion(packageName: string): Promise<string | null> {
+  private async getLatestVersion(
+    packageName: string,
+    timeoutMs: number
+  ): Promise<string | null> {
     try {
       const version = await latestVersion(packageName);
       return version;
     } catch (error) {
       try {
-        const { stdout } = await execAsync(`npm view ${packageName} version`);
+        // O fallback tem teto próprio: sem ele, um registro npm lento deixa um
+        // `npm view` pendurado depois que o `Promise.race` já desistiu, e o
+        // processo do usuário fica preso a uma verificação cosmética.
+        const { stdout } = await execAsync(`npm view ${packageName} version`, {
+          timeout: timeoutMs,
+        });
         const version = stdout.trim();
         return version;
       } catch (fallbackError) {
@@ -44,22 +52,37 @@ class UpdateNotifierMiddleware {
    * @returns Promise com a versão ou null em caso de timeout/erro
    */
   private async getLatestVersionWithTimeout(packageName: string, timeoutMs: number): Promise<string | null> {
+    let timer: NodeJS.Timeout | undefined;
     try {
       // Criar uma Promise de timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout na verificação de versão')), timeoutMs);
+        timer = setTimeout(
+          () => reject(new Error('Timeout na verificação de versão')),
+          timeoutMs
+        );
+        // O temporizador desta verificação nunca pode segurar o event loop
+        // aberto: ele é cosmético e o comando pode terminar antes dele.
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
       });
 
       // Correr as duas promises em paralelo - a primeira a resolver/rejeitar vence
-      const version = await Promise.race([
-        this.getLatestVersion(packageName),
-        timeoutPromise
-      ]);
+      const consulta = this.getLatestVersion(packageName, timeoutMs);
+      // A promise perdedora do `race` continua viva: sem este `catch`, uma
+      // rejeição tardia dela vira `unhandledRejection`.
+      consulta.catch(() => undefined);
+
+      const version = await Promise.race([consulta, timeoutPromise]);
 
       return version;
     } catch (error) {
       // Em caso de timeout ou erro, retornar null silenciosamente
       return null;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -222,6 +245,15 @@ class UpdateNotifierMiddleware {
       type
     });
 
+    // A notificação sai sempre; o prompt, só onde há alguém para responder.
+    // `executar-tasks` é um lote longo, muitas vezes disparado sem terminal
+    // interativo: um `confirm` bloqueante antes de começar pendura a execução
+    // inteira à espera de uma tecla que ninguém vai apertar.
+    if (!this.podePerguntar()) {
+      await originalAction();
+      return;
+    }
+
     const shouldUpdate = await this.promptUserForUpdate(latestVersion);
 
     if (shouldUpdate) {
@@ -229,6 +261,14 @@ class UpdateNotifierMiddleware {
     } else {
       await originalAction();
     }
+  }
+
+  /**
+   * Verdadeiro apenas quando há terminal interativo de entrada e o processo não
+   * está num integrador contínuo. Fora disso, nenhum prompt é aberto.
+   */
+  private podePerguntar(): boolean {
+    return Boolean(process.stdin.isTTY) && !process.env.CI;
   }
 
   /**

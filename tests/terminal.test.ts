@@ -285,7 +285,8 @@ test('nenhuma sequencia de cor envolve o preenchimento da calha', () => {
 
 const NIVEIS_DE_GLIFO: GlyphLevel[] = [GLYPH.ASCII, GLYPH.UNICODE_BOX, GLYPH.UNICODE_FULL];
 
-const CELULAS_DA_BARRA = 6;
+const CELULAS_DA_BARRA = 8;
+const CELULAS_DA_ESPERA = 6;
 const LIMPAR_LINHA = '\r\x1b[2K';
 
 /** Colunas visiveis: sem cor e sem o prefixo de limpeza de linha. */
@@ -332,19 +333,19 @@ function comRelogio(fn: (avancarSegundos: (s: number) => void) => void): void {
   }
 }
 
-test('todo quadro dos dois conjuntos tem 6 colunas visiveis, nos tres niveis de glifo', () => {
-  const conjuntos: Array<[string, Record<GlyphLevel, ConjuntoDeQuadros>]> = [
-    ['QUADROS_SPINNER', QUADROS_SPINNER],
-    ['QUADROS_ESPERA', QUADROS_ESPERA],
+test('todo quadro tem largura constante: execucao em 8 colunas e espera em 6, nos tres niveis', () => {
+  const conjuntos: Array<[string, Record<GlyphLevel, ConjuntoDeQuadros>, number]> = [
+    ['QUADROS_SPINNER', QUADROS_SPINNER, CELULAS_DA_BARRA],
+    ['QUADROS_ESPERA', QUADROS_ESPERA, CELULAS_DA_ESPERA],
   ];
-  for (const [nome, conjunto] of conjuntos) {
+  for (const [nome, conjunto, celulas] of conjuntos) {
     for (const nivel of NIVEIS_DE_GLIFO) {
       const { quadros } = conjunto[nivel];
       assert.ok(quadros.length > 0, `${nome} nivel ${nivel} sem quadros`);
       for (const quadro of quadros) {
         assert.strictEqual(
           [...semAnsi(quadro)].length,
-          CELULAS_DA_BARRA,
+          celulas,
           `${nome} nivel ${nivel}: quadro ${JSON.stringify(quadro)}`,
         );
       }
@@ -352,15 +353,130 @@ test('todo quadro dos dois conjuntos tem 6 colunas visiveis, nos tres niveis de 
   }
 });
 
-test('o conjunto de execucao tem 8 quadros a 100 ms e o de espera 6 quadros a 500 ms', () => {
+test('o conjunto de execucao tem 54 quadros a 100 ms e o de espera 6 quadros a 500 ms', () => {
   for (const nivel of NIVEIS_DE_GLIFO) {
-    assert.strictEqual(QUADROS_SPINNER[nivel].quadros.length, 8, `execucao nivel ${nivel}`);
+    assert.strictEqual(QUADROS_SPINNER[nivel].quadros.length, 54, `execucao nivel ${nivel}`);
     assert.strictEqual(QUADROS_SPINNER[nivel].intervaloMs, 100, `execucao nivel ${nivel}`);
     assert.strictEqual(QUADROS_ESPERA[nivel].quadros.length, 6, `espera nivel ${nivel}`);
     assert.strictEqual(QUADROS_ESPERA[nivel].intervaloMs, 500, `espera nivel ${nivel}`);
     assert.ok(QUADROS_SPINNER[nivel].intervaloMs >= 100, `piso RNF-002 execucao ${nivel}`);
     assert.ok(QUADROS_ESPERA[nivel].intervaloMs >= 100, `piso RNF-002 espera ${nivel}`);
   }
+});
+
+/*
+ * Ciclo do scanner de execucao (ida, pausa, volta, pausa — o loader do OpenCode).
+ */
+
+const TONS_FULL = QUADROS_SPINNER[GLYPH.UNICODE_FULL].tons;
+
+test('a ida comeca com a ponta na primeira celula e termina com ela na ultima, com rastro', () => {
+  assert.ok(TONS_FULL, 'conjunto de execucao sem tons');
+  assert.deepStrictEqual(TONS_FULL[0], [0, -1, -1, -1, -1, -1, -1, -1], 'quadro 0: so a ponta');
+  assert.deepStrictEqual(
+    TONS_FULL[3],
+    [3, 2, 1, 0, -1, -1, -1, -1],
+    'quadro 3: rastro de cinco celulas decaindo ate a ponta',
+  );
+  assert.deepStrictEqual(
+    TONS_FULL[7],
+    [-1, -1, 5, 4, 3, 2, 1, 0],
+    'quadro 7: ponta na ultima celula e rastro decrescente atras',
+  );
+});
+
+test('na pausa no fim o rastro escorre: o ultimo quadro da pausa e todo inativo', () => {
+  assert.ok(TONS_FULL, 'conjunto de execucao sem tons');
+  const fimDaPausa = 8 + 9 - 1;
+  assert.deepStrictEqual(
+    TONS_FULL[fimDaPausa],
+    [-1, -1, -1, -1, -1, -1, -1, -1],
+    'quadro 16: ponta e rastro dissolvidos',
+  );
+});
+
+test('a volta percorre da penultima celula ate a primeira e a pausa final dissolve tudo', () => {
+  assert.ok(TONS_FULL, 'conjunto de execucao sem tons');
+  const inicioDaVolta = 8 + 9;
+  assert.deepStrictEqual(
+    TONS_FULL[inicioDaVolta],
+    [-1, -1, -1, -1, -1, -1, 0, 1],
+    'quadro 17: ponta na penultima celula, rastro a direita',
+  );
+  assert.deepStrictEqual(
+    TONS_FULL[inicioDaVolta + 6],
+    [0, 1, 2, 3, 4, 5, -1, -1],
+    'quadro 23: ponta na primeira celula, rastro a direita',
+  );
+  assert.deepStrictEqual(
+    TONS_FULL[53],
+    [-1, -1, -1, -1, -1, -1, -1, -1],
+    'quadro 53: fim da pausa inicial, tudo inativo',
+  );
+});
+
+test('sem cor o rastro vive no glifo: ponta, rastro e inativo sao tres glifos distintos', () => {
+  const formas: Array<[GlyphLevel, string, string, string]> = [
+    [GLYPH.ASCII, '#', '=', '.'],
+    [GLYPH.UNICODE_BOX, '■', '▪', '·'],
+    [GLYPH.UNICODE_FULL, '■', '▪', '⬝'],
+  ];
+  for (const [nivel, ponta, rastro, inativo] of formas) {
+    const { quadros } = QUADROS_SPINNER[nivel];
+    assert.ok(quadros[0].startsWith(ponta), `nivel ${nivel}: quadro 0 sem ponta`);
+    assert.ok(!quadros[0].includes(rastro), `nivel ${nivel}: quadro 0 com rastro`);
+    assert.strictEqual(quadros[3], `${rastro}${rastro}${rastro}${ponta}${inativo.repeat(4)}`, `nivel ${nivel}`);
+  }
+});
+
+test('com truecolor cada celula sai com brilho proprio e o rastro decai ate a ponta', () => {
+  comRelogio(() => {
+    comIndicador(GLYPH.UNICODE_FULL, LEVEL.TRUECOLOR as ColorLevel, true, (sp, escritas) => {
+      sp.start('task-7 [3/12] opus/high ctx:sim');
+      // Tres renders depois do start o quadro corrente e o 3: rastro atras da
+      // ponta na celula 3, celulas 4..7 inativas.
+      sp.update('task-7 [3/12] opus/high ctx:sim');
+      sp.update('task-7 [3/12] opus/high ctx:sim');
+      sp.update('task-7 [3/12] opus/high ctx:sim');
+      const linha = escritas[escritas.length - 1];
+      const celulas = linha
+        .slice(LIMPAR_LINHA.length)
+        .split('\x1b[0m')
+        .filter((parte) => parte.startsWith('\x1b[38;2;'));
+      assert.strictEqual(celulas.length, 8, 'nem toda celula saiu com cor propria');
+      assert.ok(celulas[3].startsWith('\x1b[38;2;95;201;214m'), 'ponta sem o petroleo cheio da paleta');
+      const componentes = celulas.map((parte) => {
+        const [r, g, b] = (parte.match(/38;2;(\d+);(\d+);(\d+)/) ?? []).slice(1).map(Number);
+        return r + g + b;
+      });
+      assert.ok(componentes[3] > componentes[2], 'celula 2 mais clara que a ponta');
+      assert.ok(componentes[2] > componentes[1], 'rastro sem decair da celula 2 para 1');
+      assert.ok(componentes[1] > componentes[0], 'rastro sem decair da celula 1 para 0');
+      assert.ok(componentes[3] > componentes[4], 'inativo mais claro que a ponta');
+      assert.strictEqual(
+        componentes[4],
+        componentes[7],
+        'celulas inativas com brilhos diferentes entre si',
+      );
+    });
+  });
+});
+
+test('petroleoAjustado decai o brilho por nivel e em NONE nao envolve nada', () => {
+  const SEM_COR = createPainter(LEVEL.NONE);
+  assert.strictEqual(SEM_COR.petroleoAjustado('■', 0.3), '■', 'NONE envolveu a celula');
+
+  const TRUECOLOR = createPainter(LEVEL.TRUECOLOR as ColorLevel);
+  assert.strictEqual(TRUECOLOR.petroleoAjustado('■', 1), TRUECOLOR.petroleo('■'), 'brilho cheio divergiu do petroleo');
+  assert.ok(TRUECOLOR.petroleoAjustado('■', 0.5).startsWith('\x1b[38;2;48;101;107m'), 'meio brilho sem RGB escalado');
+
+  const ANSI256 = createPainter(LEVEL.ANSI256 as ColorLevel);
+  assert.ok(ANSI256.petroleoAjustado('■', 1).startsWith('\x1b[38;5;80m'), 'brilho cheio fora do codigo da paleta');
+  assert.ok(ANSI256.petroleoAjustado('■', 0.5).startsWith('\x1b[38;5;59m'), 'meio brilho fora do cubo mais proximo');
+
+  const BASIC = createPainter(LEVEL.BASIC as ColorLevel);
+  assert.strictEqual(BASIC.petroleoAjustado('■', 0.9), BASIC.petroleo('■'), 'brilho alto nao e petroleo em BASIC');
+  assert.strictEqual(BASIC.petroleoAjustado('■', 0.3), BASIC.muted('■'), 'brilho baixo nao e muted em BASIC');
 });
 
 test('o rotulo de execucao traz lote, modelo, esforco, ctx e a duracao humana em ultimo lugar', () => {

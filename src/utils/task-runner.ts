@@ -182,6 +182,11 @@ export interface RunnerToolAdapter {
 
 /** Subconjunto do `ContextPackService` (task-8) consumido pelo loop. */
 export interface RunnerContextPack {
+  /**
+   * CT-050: duracao acumulada das tentativas de construcao mortas por SIGTERM,
+   * cujo consumo real nao chega a contabilidade.
+   */
+  readonly consumoNaoContabilizadoSegundos: number;
   precisaReconstruir(
     featureDir: string,
     projectRoot: string
@@ -296,6 +301,8 @@ export class TaskRunner {
   /** Marco do inicio do lote, para `Tempo total` do resumo e do `run_end` (RF-010). */
   private readonly inicioDoLote: number;
 
+  private ultimoPack: PackResult | null = null;
+
   constructor(private readonly deps: TaskRunnerDeps) {
     this.packPath = deps.packPathInicial;
     this.inicioDoLote = deps.relogio.agora();
@@ -311,6 +318,18 @@ export class TaskRunner {
     this.packPath = caminho;
     this.packConteudo = null;
     this.packEntregue = false;
+  }
+
+  /**
+   * Registra o desfecho do Contexto de Execucao e ajusta o caminho do destilado
+   * numa unica chamada. O desfecho e guardado porque o resumo precisa dizer
+   * *por que* o lote rodou sem contexto: "por opcao (`--no-context-pack`)" e
+   * "porque a construcao falhou" sao afirmacoes diferentes, e ate agora as duas
+   * apareciam identicas - nada era dito.
+   */
+  public registrarPack(resultado: PackResult): void {
+    this.ultimoPack = resultado;
+    this.setPackPath(this.deps.contextPack.caminhoParaInjecao(resultado));
   }
 
   /**
@@ -416,10 +435,19 @@ export class TaskRunner {
         );
         if (deriva.reconstruir) {
           const novo = await this.deps.contextPack.ensure(this.deps.packContexto);
-          // `setPackPath` e o unico ponto que invalida a entrega anterior. A
+          // `registrarPack` e o unico ponto que invalida a entrega anterior. A
           // atribuicao direta atualizaria o arquivo em disco e deixaria todas as
           // tasks seguintes recebendo o destilado antigo (CT-013).
-          this.setPackPath(this.deps.contextPack.caminhoParaInjecao(novo));
+          this.registrarPack(novo);
+
+          // RF-021 vale aqui tambem: esgotada a espera durante a reconstrucao
+          // entre tasks, o lote encerra com motivo de limite de uso, sem
+          // reaproveitar destilado desatualizado. O passo 11 do comando ja
+          // fazia essa verificacao; o mesmo `ensure()` dentro do laco nao, e o
+          // lote seguia sem o destilado.
+          if (novo.decisao === 'falhou' && novo.motivo === 'limite_de_uso') {
+            return 'limite_de_uso';
+          }
         }
       }
 
@@ -855,6 +883,11 @@ export class TaskRunner {
       // Numericas e cruas, em segundos (CT-043, RF-010).
       tempo_total_segundos: this.tempoTotalSegundos(),
       tempo_em_espera_segundos: this.deps.espera.acumuladoSegundos,
+      // CT-050: uma construcao morta por SIGTERM gastou tokens que nenhum JSON
+      // final relata. Sem estes dois campos, o registro afirma custo zero para
+      // um run que custou dinheiro.
+      consumo_nao_contabilizado: this.consumoNaoContabilizado() > 0,
+      duracao_nao_contabilizada_segundos: this.consumoNaoContabilizado(),
     });
 
     // Remocao em melhor esforco do arquivo de apoio de execucao (CT-035): ela
@@ -878,8 +911,44 @@ export class TaskRunner {
     }
 
     this.deps.layout.dispose();
-    this.deps.layout.summary(this.montarResumo(motivo));
+    // RF-025: um lote cancelado na confirmacao nao comecou - nao gera resumo,
+    // gera uma linha, escrita pelo comando. O fechamento do registro continua
+    // obrigatorio, que e o que `encerrar` guarda num lugar so.
+    if (motivo !== 'cancelado_na_confirmacao') {
+      this.deps.layout.summary(this.montarResumo(motivo));
+    }
     await this.deps.logger.close();
+  }
+
+  /** Duracao das tentativas de construcao mortas por SIGTERM (CT-050). */
+  private consumoNaoContabilizado(): number {
+    return this.deps.contextPack.consumoNaoContabilizadoSegundos;
+  }
+
+  /**
+   * Linha de contexto do resumo (RF-010). Existe porque `sem contexto` tinha
+   * duas causas indistinguiveis na tela: a opcao `--no-context-pack` e a falha
+   * da construcao.
+   */
+  private linhaDeContexto(): string | null {
+    const pack = this.ultimoPack;
+    if (pack === null) {
+      return null;
+    }
+    switch (pack.decisao) {
+      case 'desligado':
+        return '  Contexto           sem contexto por opcao (--no-context-pack)';
+      case 'falhou':
+        return `  Contexto           sem contexto por falha na construcao (${pack.motivo})`;
+      case 'interrompido':
+        return '  Contexto           sem contexto: construcao interrompida';
+      case 'reaproveitado':
+        return '  Contexto           destilado reaproveitado';
+      case 'construido':
+        return '  Contexto           destilado construido nesta execucao';
+      default:
+        return null;
+    }
   }
 
   /** Duracao do lote inteiro, do inicio ate o encerramento (RF-010). */
@@ -913,6 +982,21 @@ export class TaskRunner {
       }`,
       `  Custo acumulado    $${this.deps.accounting.formatCustoExibicao(total.custoAcumuladoUsd)}`
     );
+
+    // CT-050: o consumo de uma construcao morta nao esta em `Tokens totais` nem
+    // em `Custo acumulado`, e nao ha como estima-lo. A linha existe para que o
+    // resumo nao afirme, por omissao, que o lote nao custou nada.
+    const naoContabilizado = this.consumoNaoContabilizado();
+    if (naoContabilizado > 0) {
+      linhas.push(
+        `  Nao contabilizado  ${formatarDuracao(naoContabilizado)} de construcao do Contexto de Execucao nao concluida`
+      );
+    }
+
+    const contexto = this.linhaDeContexto();
+    if (contexto !== null) {
+      linhas.push(contexto);
+    }
 
     if (this.deps.windowBudgetTokens > 0) {
       linhas.push(

@@ -28,6 +28,11 @@ import { resolveHome, shortenPath } from '../utils/path-resolver.js';
 import { formatarDuracao } from '../utils/formatos.js';
 import { EsperaPorLimiteDeUso, relogioDoSistema } from '../utils/espera-limite.js';
 import { validateOptions } from '../utils/executar-tasks-validation.js';
+import {
+  confirmarExecucao,
+  devePerguntar,
+  montarPergunta,
+} from '../utils/confirmacao-execucao.js';
 import { TaskRunner, ajustarPorCapacidades } from '../utils/task-runner.js';
 import type { RunnerExecutorConfig } from '../utils/task-runner.js';
 import { montarAdapter, prepararArquivoDeApoio } from '../utils/executar-tasks-wiring.js';
@@ -348,10 +353,16 @@ async function executar(
       effort: opcoes.effort,
       packMaxTokens: opcoes.packMaxTokens,
       cacheTuning: opcoes.cacheTuning,
+      packTimeoutSegundos: opcoes.packTimeout,
     },
     // RF-003: canal unico. O layout monta o rotulo, encerra o indicador de
     // progresso e escreve a linha.
     onMensagem: (kind, texto) => layout.message(kind, texto),
+    // RF-029: par de etapa longa. O indicador e ligado ANTES da invocacao da
+    // ferramenta e substituido pela linha final na mesma linha - sem ele a
+    // construcao do destilado nao produz byte algum na tela enquanto roda.
+    onEtapaInicio: (info) => layout.etapaStart(info),
+    onEtapaFim: (kind, texto) => layout.etapaEnd(kind, texto),
   };
 
   const runner = new TaskRunner({
@@ -467,6 +478,79 @@ async function executar(
       }
     }
 
+    // 10.5 Confirmacao de execucao (RF-025): a ultima porta antes do primeiro
+    // gasto real. O resumo e o cabecalho ja exibido; aqui so entram as linhas
+    // que faltavam para uma decisao informada e a pergunta unica.
+    const tasksDoneSelecionadas = selecionadas.filter((task) => task.done);
+    if (tasksDoneSelecionadas.length > 0) {
+      layout.message(
+        'info',
+        `tasks DONE que serao puladas: ${tasksDoneSelecionadas
+          .map((task) => task.arquivo.replace(/\.md$/i, ''))
+          .join(', ')}`
+      );
+    }
+
+    const condicoesDeConfirmacao = {
+      yes: opcoes.yes,
+      dryRun: opcoes.dryRun,
+      stdinIsTTY: Boolean(process.stdin.isTTY),
+      ci: process.env.CI !== undefined,
+    };
+    if (!devePerguntar(condicoesDeConfirmacao)) {
+      const motivoPulo = opcoes.yes
+        ? 'yes'
+        : opcoes.dryRun
+          ? 'dry_run'
+          : 'nao_interativo';
+      await logger.logEvent({
+        event: 'confirmacao_execucao',
+        ts: '',
+        decisao: 'pulado',
+        motivo_pulo: motivoPulo,
+      });
+    } else {
+      const modoPermissao =
+        opcoes.permissionMode || (opcoes.autoApprove ? 'bypassPermissions' : '');
+      const decisao = await confirmarExecucao(
+        montarPergunta({
+          tasks: selecionadas.length,
+          ferramenta,
+          model: opcoes.model,
+          effort: opcoes.effort,
+          acessoTotal: modoPermissao === 'bypassPermissions',
+        }),
+        { entrada: process.stdin, saida: process.stdout, painter }
+      );
+      await logger.logEvent({
+        event: 'confirmacao_execucao',
+        ts: '',
+        decisao,
+        motivo_pulo: null,
+      });
+
+      if (decisao === 'recusado') {
+        layout.message('aviso', 'execucao cancelada pelo usuario');
+        await runner.encerrar('cancelado_na_confirmacao');
+        process.exitCode = 0;
+        return;
+      }
+      if (decisao === 'interrompido') {
+        if (sinalRecebido) {
+          // Ctrl+C no prompt: o handler de sinal (RF-024) ja anunciou a
+          // interrupcao e e inofensivo sem task em curso; falta fechar o
+          // registro e o codigo 130, que o finally define.
+          await runner.encerrar('interrompido_pelo_usuario');
+        } else {
+          // EOF sem resposta: na duvida, nao gasta. Mesmo desfecho da recusa.
+          layout.message('aviso', 'execucao cancelada pelo usuario');
+          await runner.encerrar('cancelado_na_confirmacao');
+          process.exitCode = 0;
+        }
+        return;
+      }
+    }
+
     // 11. Contexto de Execucao (RF-007). Em `--dry-run` a construcao e pulada:
     // ela invoca a CLI de verdade e custa tokens reais, e a opcao promete o
     // oposto ("sem invocar a CLI", RF-002).
@@ -487,7 +571,7 @@ async function executar(
         return;
       }
 
-      runner.setPackPath(contextPack.caminhoParaInjecao(packResult));
+      runner.registrarPack(packResult);
     }
 
     // 12 e 13. Loop das tasks e encerramento.
@@ -602,8 +686,9 @@ async function acaoEnvolvida(
 }
 
 /**
- * Subcomando `executar-tasks` (CT-001). As 25 opcoes da secao 4.1 do techspec,
- * na forma exata da coluna "Declaracao Commander". As quatro negativas sao
+ * Subcomando `executar-tasks` (CT-001). As 26 opcoes da secao 4.1 do techspec
+ * mais a `--yes` de RF-025, na forma exata da coluna "Declaracao Commander".
+ * As quatro negativas sao
  * declaradas sozinhas: em Commander 14 isso lhes da default `true` e `false`
  * quando informadas, e nenhuma opcao positiva correspondente e exposta.
  * `--model` e `--effort` nao usam `requiredOption` de proposito: a mensagem
@@ -643,6 +728,11 @@ export const executarTasksCommand = new Command('executar-tasks')
     'Nao aguarda a renovacao da cota; encerra o lote no primeiro limite de uso'
   )
   .option('--pack-max-tokens <n>', 'Teto de tamanho do Contexto de Execucao', '8000')
+  .option(
+    '--pack-timeout <segundos>',
+    'Teto de tempo da construcao do Contexto de Execucao (0 desliga)',
+    '900'
+  )
   .option('--tasks <selecao>', 'Selecao de tasks (ex.: 1-3,7)', '')
   .option('--allow <regra>', 'Regra adicional de --allowedTools (repetivel)', colecionar, [])
   .option('--preflight', 'Executa apenas as verificacoes previas e encerra', false)
@@ -651,4 +741,5 @@ export const executarTasksCommand = new Command('executar-tasks')
   .option('--mcp-timeout <seg>', 'Timeout da verificacao de MCPs em segundos', '15')
   .option('--no-mcp-check', 'Nao verifica os MCPs declarados no preflight')
   .option('--dry-run', 'Mostra o que seria executado sem invocar a CLI', false)
+  .option('-y, --yes', 'Pula a confirmacao antes de iniciar o lote', false)
   .action(acaoEnvolvida);

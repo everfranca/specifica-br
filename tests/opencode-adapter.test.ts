@@ -72,6 +72,7 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     maxWait: '6h',
     waitOnLimit: true,
     packMaxTokens: 8000,
+    packTimeout: 900,
     tasks: '',
     allow: [],
     preflight: false,
@@ -80,6 +81,7 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     mcpTimeout: 15,
     mcpCheck: true,
     dryRun: false,
+    yes: false,
     ...over,
   };
 }

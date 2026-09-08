@@ -32,6 +32,7 @@ export interface ValidatedOptions {
   maxWaitSegundos: number;
   waitOnLimit: boolean;
   packMaxTokens: number;
+  packTimeout: number;
   tasks: string;
   allow: string[];
   preflight: boolean;
@@ -40,6 +41,7 @@ export interface ValidatedOptions {
   mcpTimeout: number;
   mcpCheck: boolean;
   dryRun: boolean;
+  yes: boolean;
 }
 
 const EFFORT: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -53,6 +55,12 @@ const PERMISSION: readonly PermissionMode[] = [
 ];
 
 const TETO_MAX_WAIT_SEGUNDOS = 43200;
+/**
+ * Teto padrao da construcao do Contexto de Execucao, em segundos. Quinze
+ * minutos e generoso para um destilado com opus/high e ainda assim finito: sem
+ * teto, um filho travado nunca e morto e o unico recurso do usuario e o `Ctrl+C`.
+ */
+const PACK_TIMEOUT_PADRAO = 900;
 const MAX_WAIT_PADRAO = '6h';
 const RE_SEGUNDOS = /^\d+$/;
 const RE_MINUTOS = /^\d+m$/;
@@ -264,6 +272,12 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     min: 0,
     inteiro: true,
   });
+  // Teto de tempo da construcao do Contexto de Execucao (P1-3). `0` desliga o
+  // teto e restaura o comportamento anterior, sem limite algum.
+  const packTimeout = numero(b.packTimeout, PACK_TIMEOUT_PADRAO, '--pack-timeout', {
+    min: 0,
+    inteiro: true,
+  });
   const mcpTimeout = numero(b.mcpTimeout, 15, '--mcp-timeout', {
     minExclusivo: 0,
     inteiro: true,
@@ -300,6 +314,7 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     // caso contrario (RF-027); `!== false` cobre tambem o `undefined`.
     waitOnLimit: b.waitOnLimit !== false,
     packMaxTokens,
+    packTimeout,
     tasks,
     allow,
     preflight: flag(b.preflight),
@@ -308,5 +323,6 @@ export function validateOptions(brutas: Record<string, unknown>): ValidatedOptio
     mcpTimeout,
     mcpCheck: b.mcpCheck !== false,
     dryRun: flag(b.dryRun),
+    yes: flag(b.yes),
   };
 }

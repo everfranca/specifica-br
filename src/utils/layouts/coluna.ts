@@ -16,7 +16,11 @@ import { status, larguraUtil, Spinner } from '../terminal/index.js';
 import type { Painter, StatusKind } from '../terminal/index.js';
 import { renderCabecalho } from '../cabecalho/index.js';
 import { formatarDuracao, formatarMilhar } from '../formatos.js';
-import type { DadosDeAbertura, EstadoDeEspera } from '../../types/executar-tasks.js';
+import type {
+  DadosDeAbertura,
+  EstadoDeEspera,
+  EtapaInfo,
+} from '../../types/executar-tasks.js';
 import type {
   LayoutContext,
   LayoutRenderer,
@@ -124,6 +128,17 @@ export function linhaDeRetomada(
   agora: Date = new Date(),
 ): string {
   return `retomada as ${horaAbsoluta(agora)} - espera de ${formatarDuracao(esperaEfetivaSegundos)}`;
+}
+
+/**
+ * Linha de inicio de uma etapa longa fora de task (RF-029), comum as quatro
+ * estrategias: o que esta acontecendo, com que modelo, com que esforco, e o
+ * aviso de que a espera e esperada. E a linha que faltava: sem ela, uma
+ * construcao de Contexto de Execucao com opus/high deixa o terminal em silencio
+ * por minutos e o usuario interrompe um processo que estava funcionando.
+ */
+export function linhaDeEtapa(info: EtapaInfo): string {
+  return `${info.rotulo} com ${info.model}/${info.effort} - isso pode levar alguns minutos`;
 }
 
 /**
@@ -281,6 +296,34 @@ export abstract class LayoutBase implements LayoutRenderer {
       this.pararIndicador(this.rotuloAtivo);
     }
     escreverLinha(this.contexto, status(kind, texto, this.contexto.painter));
+  }
+
+  /**
+   * Inicio de uma etapa longa fora de task (RF-029). Mesma disciplina de
+   * RF-014: em TTY, indicador animado com tempo decorrido; fora de TTY, uma
+   * unica linha, sem reescrita. Implementacao unica nesta base porque a forma
+   * nao depende da estrategia (CT-046).
+   */
+  etapaStart(info: EtapaInfo): void {
+    const linha = linhaDeEtapa(info);
+    if (!this.contexto.isTTY) {
+      this.rotuloAtivo = linha;
+      escreverLinha(this.contexto, linha);
+      return;
+    }
+    this.iniciarIndicador(linha);
+  }
+
+  /**
+   * Fim da etapa: a linha final substitui o indicador na mesma linha. Sem
+   * indicador ativo — fora de TTY, ou quando uma mensagem intermediaria ja o
+   * encerrou — a linha e escrita normalmente, fechando o par de duas linhas.
+   */
+  etapaEnd(kind: StatusKind, texto: string): void {
+    const linha = status(kind, texto, this.contexto.painter);
+    if (!this.pararIndicador(linha)) {
+      escreverLinha(this.contexto, linha);
+    }
   }
 
   /**

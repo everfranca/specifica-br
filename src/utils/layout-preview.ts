@@ -1,9 +1,48 @@
 import type { HeaderStyle, LayoutName } from '../types/config.js';
 import type { DadosDeAbertura } from '../types/executar-tasks.js';
 import type { Painter, GlyphLevel } from './terminal/index.js';
+import { QUADROS_SPINNER, GLYPH, visibleWidth } from './terminal/index.js';
 import { renderCabecalho } from './cabecalho/index.js';
 import { createLayout } from './layouts/index.js';
 import type { LayoutContext } from './layouts/index.js';
+import { linhasDoBloco } from './layouts/lote.js';
+import type { ItemLote } from './layouts/lote.js';
+
+const ANSI_M = /\x1b\[[0-9;]*m/g;
+
+/**
+ * Trunca em `max` colunas visiveis, marcando o corte com `...`. Diferente de
+ * `truncar` (que opera sobre texto cru), aceita linhas ja pintadas: as
+ * sequencias de escape nao entram na conta das colunas e um corte no meio de
+ * um segmento pintado fecha a cor, para nao vazar marcacao para a linha
+ * seguinte do cartao. Uso restrito as previas, cujo conteudo de exemplo pode
+ * exceder a largura do terminal.
+ */
+function truncarVisivel(texto: string, max: number): string {
+  if (visibleWidth(texto) <= max) {
+    return texto;
+  }
+  const alvo = Math.max(0, max - 3);
+  let largura = 0;
+  let saida = '';
+  let i = 0;
+  let abertas = 0;
+  while (i < texto.length && largura < alvo) {
+    ANSI_M.lastIndex = i;
+    const escape = ANSI_M.exec(texto);
+    if (escape !== null && escape.index === i) {
+      saida += escape[0];
+      abertas += escape[0] === '\x1b[0m' ? -1 : 1;
+      i += escape[0].length;
+      continue;
+    }
+    saida += texto[i];
+    largura += 1;
+    i += 1;
+  }
+  const fechamento = abertas > 0 ? '\x1b[0m' : '';
+  return `${saida}${fechamento}...`;
+}
 
 /**
  * Ambiente visual da pre-visualizacao. Cor e glifo chegam prontos da camada
@@ -110,14 +149,37 @@ const EXEMPLO_FIM_ERRO = {
 };
 
 /**
- * Devolve as linhas de exemplo de um layout, sem executar nada (RF-016).
- *
- * Usa `createLayout` com um `stream` que acumula as escritas em memoria. O
- * contexto e sempre nao interativo: assim a saida e deterministica (sem
- * animacao nem sequencias de cursor) e o layout `lote` cai para `coluna`, que
- * e exatamente o que o usuario veria ao rodar o lote sem terminal interativo.
+ * Snapshot estatico do bloco de altura fixa do layout `lote`, com os mesmos
+ * eventos de exemplo das demais previas (1 ok, 1 erro, 1 pulada). Montado pela
+ * mesma funcao pura que o `LoteLayout` renderiza: a previa mostra a barra e os
+ * marcadores de verdade, com o quadro da task ativa congelado no primeiro frame
+ * do nivel de glifo corrente e o relogio em zero — nada de sequencia de cursor
+ * dentro do cartao. E a correcao do achado A1: a fabrica degrada `lote` para
+ * `coluna` fora de TTY, e a previa antiga mostrava a forma errada.
  */
-export function buildPreview(nome: LayoutName, base: LayoutPreviewBase): string[] {
+function previaLote(base: LayoutPreviewBase): string[] {
+  const itens: ItemLote[] = [
+    { numero: 1, arquivo: EXEMPLO_INICIO.arquivo, estado: 'ok', inicioMs: 0 },
+    { numero: 2, arquivo: EXEMPLO_FIM_ERRO.arquivo, estado: 'erro', inicioMs: 0 },
+    { numero: 3, arquivo: 'task-3.md', estado: 'pulada', inicioMs: 0 },
+  ];
+  const conf = QUADROS_SPINNER[base.glyphLevel] ?? QUADROS_SPINNER[GLYPH.ASCII];
+  return linhasDoBloco(
+    itens,
+    EXEMPLO_INICIO.total,
+    conf.quadros[0],
+    { painter: base.painter, largura: base.largura },
+    0,
+  );
+}
+
+/**
+ * Linhas de exemplo de `coluna`, `moldura` e `regua`, sem executar nada
+ * (RF-016). Usa `createLayout` com um `stream` que acumula as escritas em
+ * memoria e um contexto sempre nao interativo, para saida deterministica (sem
+ * animacao nem sequencias de cursor).
+ */
+function previaPorEventos(nome: LayoutName, base: LayoutPreviewBase): string[] {
   const linhas: string[] = [];
   const stream = {
     write(texto: string): boolean {
@@ -142,10 +204,23 @@ export function buildPreview(nome: LayoutName, base: LayoutPreviewBase): string[
   layout.taskSkipped('task-3.md', 'DONE', false);
   layout.dispose();
 
-  const linhasDeTask = linhas
+  return linhas
     .join('')
     .split('\n')
     .filter((linha) => linha.length > 0);
+}
+
+/**
+ * Devolve as linhas de exemplo de um layout (RF-016): o cabecalho no estilo
+ * configurado seguido das linhas de task. Para o `lote`, o snapshot vem do
+ * bloco real de altura fixa (barra + marcadores), nao da forma degradada. As
+ * linhas de task respeitam a largura recebida, com ou sem cor.
+ */
+export function buildPreview(nome: LayoutName, base: LayoutPreviewBase): string[] {
+  const linhasDeTask = (nome === 'lote'
+    ? previaLote(base)
+    : previaPorEventos(nome, base)
+  ).map((linha) => truncarVisivel(linha, base.largura));
 
   return [...buildHeaderPreview(base.cabecalho, base), ...linhasDeTask];
 }

@@ -177,6 +177,7 @@ function makeContexto(over: Record<string, unknown> = {}) {
       effort: 'low' as const,
       packMaxTokens: 8000,
       cacheTuning: true,
+      packTimeoutSegundos: 0,
     },
     ...over,
   };
@@ -473,6 +474,7 @@ test('caminhoParaInjecao devolve null quando a decisao e falhou ou desligado', a
       motivo: 'x',
       fonteAlterada: null,
       tokensGastos: 0,
+      duracaoNaoContabilizadaSegundos: 0,
     }),
     null
   );
@@ -486,6 +488,7 @@ test('caminhoParaInjecao devolve null quando a decisao e falhou ou desligado', a
       motivo: 'desligado',
       fonteAlterada: null,
       tokensGastos: 0,
+      duracaoNaoContabilizadaSegundos: 0,
     }),
     null
   );
@@ -860,4 +863,244 @@ test('a mensagem de reaproveitamento encerra o indicador antes de escrever e res
   );
   assert.equal(linha.startsWith('\r'), false);
   assert.match(linha, /^\[INFO\]/);
+});
+
+// ---------------------------------------------------------------------------
+// Feedback da construcao (RF-029) e morte do filho (CT-050).
+// ---------------------------------------------------------------------------
+
+/** Canal de etapa longa: captura inicio e fim, e a ordem em que chegam. */
+function makeCanalDeEtapa(ordem: string[]) {
+  const inicios: Array<{ rotulo: string; model: string; effort: string }> = [];
+  const fins: Array<[string, string]> = [];
+  return {
+    inicios,
+    fins,
+    onEtapaInicio: (info: { rotulo: string; model: string; effort: string }): void => {
+      ordem.push('etapaStart');
+      inicios.push(info);
+    },
+    onEtapaFim: (kind: string, texto: string): void => {
+      ordem.push('etapaEnd');
+      fins.push([kind, texto]);
+    },
+  };
+}
+
+/**
+ * Adapter que registra a ordem dos eventos e devolve um `TaskResult` de filho
+ * morto por SIGTERM: `exitCode: -1`, stdout vazio, nenhum arquivo escrito.
+ */
+function makeAdapterMorto(
+  ordem: string[],
+  desfecho: { aborted?: boolean; timedOut?: boolean },
+  aoInvocar?: () => void
+) {
+  const estado = { chamadas: 0, timeouts: [] as Array<number | undefined> };
+  const adapter = {
+    capacidades: { relatoDeModeloEfetivo: true },
+    detectRateLimit(): boolean {
+      return false;
+    },
+    async runPack(
+      _prompt: string,
+      _entrada: unknown,
+      _cwd: string,
+      _onStderrChunk?: (chunk: string) => void,
+      _signal?: AbortSignal,
+      timeoutMs?: number
+    ): Promise<TaskResult> {
+      ordem.push('runPack');
+      estado.chamadas += 1;
+      estado.timeouts.push(timeoutMs);
+      aoInvocar?.();
+      return baseResult({
+        subtype: desfecho.aborted ? 'interrompido' : 'timeout',
+        isError: true,
+        exitCode: -1,
+        rawStdout: '',
+        signal: 'SIGTERM',
+        aborted: desfecho.aborted === true,
+        timedOut: desfecho.timedOut === true,
+      });
+    },
+  };
+  return { adapter, estado };
+}
+
+test('a mensagem de inicio da construcao e publicada ANTES da chamada a runPack', async () => {
+  await escreverFontes();
+  const ordem: string[] = [];
+  const { adapter } = makeAdapter();
+  const adapterInstrumentado = {
+    ...adapter,
+    async runPack(...args: Parameters<typeof adapter.runPack>) {
+      ordem.push('runPack');
+      return adapter.runPack(...args);
+    },
+  };
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(
+    adapterInstrumentado as never,
+    new AccountingService(),
+    logger as never
+  );
+  const etapa = makeCanalDeEtapa(ordem);
+
+  await svc.ensure(makeContexto(etapa));
+
+  assert.deepEqual(ordem, ['etapaStart', 'runPack', 'etapaEnd']);
+  assert.deepEqual(etapa.inicios, [
+    { rotulo: 'Construindo o Contexto de Execucao', model: 'sonnet', effort: 'low' },
+  ]);
+  assert.equal(etapa.fins[0]?.[0], 'ok');
+});
+
+test('a construcao interrompida vira pack_build_interrompido, e nao falha de construcao', async () => {
+  await escreverFontes();
+  const ordem: string[] = [];
+  const { logger, eventos } = makeLogger();
+  let svc: ContextPackService;
+  const { adapter } = makeAdapterMorto(ordem, { aborted: true }, () => svc.abort());
+  svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    null,
+    makeRelogio(64_000) as never
+  );
+  const canal = makeCanal();
+  const etapa = makeCanalDeEtapa(ordem);
+
+  const r = await svc.ensure(makeContexto({ onMensagem: canal.onMensagem, ...etapa }));
+
+  assert.equal(r.decisao, 'interrompido');
+  assert.equal(r.motivo, 'interrompido');
+  assert.equal(svc.caminhoParaInjecao(r), null);
+
+  const interrompido = eventos.find((e) => e.event === 'pack_build_interrompido');
+  assert.ok(interrompido, 'evento pack_build_interrompido nao foi gravado');
+  assert.equal(interrompido.motivo, 'interrompido_pelo_usuario');
+  assert.equal(interrompido.consumo_nao_contabilizado, true);
+  assert.equal(interrompido.duracao_segundos, 64);
+  assert.equal(eventos.filter((e) => e.event === 'pack_build_failed').length, 0);
+
+  const todas = [...canal.mensagens, ...etapa.fins];
+  assert.ok(
+    !todas.some(([, texto]) => texto.includes('falha ao construir o Contexto de Execucao')),
+    'o aviso de falha saiu depois de um Ctrl+C'
+  );
+  assert.equal(svc.consumoNaoContabilizadoSegundos, 64);
+});
+
+test('o teto de tempo mata a construcao, nomeia o motivo e nao aborta o lote', async () => {
+  await escreverFontes();
+  const ordem: string[] = [];
+  const { adapter, estado } = makeAdapterMorto(ordem, { timedOut: true });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(
+    adapter as never,
+    new AccountingService(),
+    logger as never,
+    null,
+    makeRelogio(64_000) as never
+  );
+  const etapa = makeCanalDeEtapa(ordem);
+
+  const r = await svc.ensure(
+    makeContexto({
+      ...etapa,
+      opcoes: { ...makeContexto().opcoes, packTimeoutSegundos: 900 },
+    })
+  );
+
+  assert.deepEqual(estado.timeouts, [900_000], 'o teto nao chegou ao adapter');
+  assert.equal(r.decisao, 'falhou');
+  assert.equal(r.motivo, 'timeout');
+  assert.equal(svc.caminhoParaInjecao(r), null);
+
+  const ev = eventos.find((e) => e.event === 'pack_build_interrompido');
+  assert.ok(ev);
+  assert.equal(ev.motivo, 'timeout');
+
+  const [kind, texto] = etapa.fins[0] ?? ['', ''];
+  assert.equal(kind, 'aviso');
+  assert.ok(texto.includes('teto de tempo'), texto);
+  assert.ok(texto.includes('seguindo sem ele'), texto);
+});
+
+test('packTimeoutSegundos igual a 0 nao arma teto algum no adapter', async () => {
+  await escreverFontes();
+  const ordem: string[] = [];
+  const { adapter, estado } = makeAdapterMorto(ordem, { timedOut: true });
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+
+  await svc.ensure(makeContexto());
+
+  assert.deepEqual(estado.timeouts, [0]);
+});
+
+test('a falha ja ocorrida volta a ser anunciada em cada ensure seguinte', async () => {
+  await escreverFontes();
+  const { adapter, estado } = makeAdapter({ escreveArquivo: false });
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+  const depoisDaPrimeira = canal.mensagens.length;
+  const segunda = await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+
+  assert.equal(estado.chamadas, 1, 'a construcao foi repetida');
+  assert.equal(segunda.decisao, 'falhou');
+  assert.ok(
+    canal.mensagens.length > depoisDaPrimeira,
+    'a segunda avaliacao devolveu o cache em silencio'
+  );
+  assert.ok(
+    canal.mensagens
+      .slice(depoisDaPrimeira)
+      .some(([kind, texto]) => kind === 'aviso' && texto.includes('nao sera repetida'))
+  );
+});
+
+test('architecture.md ausente a partir do projectRoot vira aviso, e nao silencio', async () => {
+  await fs.writeFile(path.join(featureDir, 'techspec.md'), '# techspec');
+  await fs.writeFile(path.join(featureDir, 'prd.md'), '# prd');
+  const { adapter } = makeAdapter();
+  const { logger } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+  await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+
+  const avisos = canal.mensagens.filter(([, texto]) =>
+    texto.includes('specs/core/architecture.md nao encontrado')
+  );
+  assert.equal(avisos.length, 1, 'o aviso deveria sair uma unica vez por execucao');
+});
+
+test('permissao negada na construcao aparece na tela e no evento pack_build', async () => {
+  await escreverFontes();
+  const { adapter } = makeAdapter({
+    resultado: baseResult({ permissionDenials: 2, ferramentasNegadas: 'WebFetch' }),
+  });
+  const { logger, eventos } = makeLogger();
+  const svc = new ContextPackService(adapter as never, new AccountingService(), logger as never);
+  const canal = makeCanal();
+
+  await svc.ensure(makeContexto({ onMensagem: canal.onMensagem }));
+
+  const ev = eventos.find((e) => e.event === 'pack_build');
+  assert.ok(ev);
+  assert.equal(ev.permission_denials, 2);
+  assert.equal(ev.ferramentas_negadas, 'WebFetch');
+  assert.ok(
+    canal.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' && texto.includes('permissao(oes) negada(s)') && texto.includes('WebFetch')
+    )
+  );
 });

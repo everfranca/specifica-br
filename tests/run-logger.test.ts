@@ -282,3 +282,93 @@ test('o texto bruto da ferramenta nao aparece no .jsonl da espera', async () => 
     (await fs.readFile(path.join(logsDir, 'run_RID.stderr'), 'utf-8')).includes('conta-secreta-123')
   );
 });
+
+test('confirmacao_execucao e gravavel nos quatro valores de decisao (RF-025)', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  const logger = new RunLoggerService();
+  await logger.open(logsDir, 'RID');
+
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'confirmado',
+    motivo_pulo: null,
+  });
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'recusado',
+    motivo_pulo: null,
+  });
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'interrompido',
+    motivo_pulo: null,
+  });
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'pulado',
+    motivo_pulo: 'nao_interativo',
+  });
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'pulado',
+    motivo_pulo: 'yes',
+  });
+  await logger.logEvent({
+    event: 'confirmacao_execucao',
+    ts: '',
+    decisao: 'pulado',
+    motivo_pulo: 'dry_run',
+  });
+  await logger.close();
+
+  const linhas = (await fs.readFile(path.join(logsDir, 'run_RID.jsonl'), 'utf-8'))
+    .split('\n')
+    .filter(Boolean)
+    .map((linha) => JSON.parse(linha));
+
+  assert.deepStrictEqual(
+    linhas.map((linha) => [linha.event, linha.decisao, linha.motivo_pulo]),
+    [
+      ['confirmacao_execucao', 'confirmado', null],
+      ['confirmacao_execucao', 'recusado', null],
+      ['confirmacao_execucao', 'interrompido', null],
+      ['confirmacao_execucao', 'pulado', 'nao_interativo'],
+      ['confirmacao_execucao', 'pulado', 'yes'],
+      ['confirmacao_execucao', 'pulado', 'dry_run'],
+    ]
+  );
+});
+
+test('run_end aceita cancelado_na_confirmacao com contadores zerados (RF-025)', async () => {
+  const logsDir = path.join(dir, 'logs', 'p');
+  const logger = new RunLoggerService();
+  await logger.open(logsDir, 'RID');
+  await logger.logEvent({
+    event: 'run_end',
+    ts: '',
+    motivo: 'cancelado_na_confirmacao',
+    tasks_executadas: 0,
+    tasks_com_erro: 0,
+    tokens_gastos_total: 0,
+    custo_total_usd: '0.000000',
+    tempo_total_segundos: 0,
+    tempo_em_espera_segundos: 0,
+    consumo_nao_contabilizado: false,
+    duracao_nao_contabilizada_segundos: 0,
+  });
+  await logger.close();
+
+  const linha = JSON.parse(
+    (await fs.readFile(path.join(logsDir, 'run_RID.jsonl'), 'utf-8')).split('\n')[0]
+  );
+
+  assert.strictEqual(linha.event, 'run_end');
+  assert.strictEqual(linha.motivo, 'cancelado_na_confirmacao');
+  assert.strictEqual(linha.tasks_executadas, 0);
+  assert.strictEqual(linha.custo_total_usd, '0.000000');
+});

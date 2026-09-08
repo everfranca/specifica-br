@@ -27,6 +27,7 @@ const OPCOES_ESPERADAS = [
   '--no-skill-dirs',
   '--no-wait-on-limit',
   '--pack-max-tokens',
+  '--pack-timeout',
   '--permission-mode',
   '--preflight',
   '--require-cmd',
@@ -36,6 +37,7 @@ const OPCOES_ESPERADAS = [
   '--tasks',
   '--tool',
   '--window-budget-tokens',
+  '--yes',
 ].sort();
 
 const MODELO_AUSENTE =
@@ -45,9 +47,9 @@ const ESFORCO_AUSENTE =
 
 const BASE = { model: 'sonnet', effort: 'medium' };
 
-test('as 25 opcoes de RF-002 e CT-030 estao declaradas, nem mais nem menos', () => {
+test('as 27 opcoes de RF-002, CT-030, P1-3 e RF-025 estao declaradas, nem mais nem menos', () => {
   const longs = executarTasksCommand.options.map((o) => o.long).sort();
-  assert.equal(executarTasksCommand.options.length, 25);
+  assert.equal(executarTasksCommand.options.length, 27);
   assert.deepEqual(longs, OPCOES_ESPERADAS);
 });
 
@@ -376,4 +378,27 @@ test('sem --effort nenhum lote inicia em modo normal, --dry-run e --preflight (R
 
   assert.equal(await haRegistroDeExecucao(home), false);
   await fs.remove(home);
+});
+
+test('--pack-timeout tem default 900, aceita 0 e recusa negativo ou nao inteiro', () => {
+  assert.equal(validateOptions({ ...BASE }).packTimeout, 900);
+  assert.equal(validateOptions({ ...BASE, packTimeout: '0' }).packTimeout, 0);
+  assert.equal(validateOptions({ ...BASE, packTimeout: '120' }).packTimeout, 120);
+  assert.throws(() => validateOptions({ ...BASE, packTimeout: '-1' }));
+  assert.throws(() => validateOptions({ ...BASE, packTimeout: '1.5' }));
+  assert.throws(() => validateOptions({ ...BASE, packTimeout: 'muito' }));
+});
+
+test('--yes e declarada com a descricao de RF-025 e sem valor padrao explicito', () => {
+  const yes = executarTasksCommand.options.find((o) => o.long === '--yes');
+  assert.ok(yes);
+  assert.equal(yes.flags, '-y, --yes');
+  assert.equal(yes.description, 'Pula a confirmacao antes de iniciar o lote');
+  assert.equal(yes.defaultValue, false);
+});
+
+test('--yes normaliza para true quando informada e false quando ausente (RF-025)', () => {
+  assert.equal(validateOptions({ ...BASE, yes: true }).yes, true);
+  assert.equal(validateOptions(BASE).yes, false);
+  assert.equal(validateOptions({ ...BASE, yes: false }).yes, false);
 });

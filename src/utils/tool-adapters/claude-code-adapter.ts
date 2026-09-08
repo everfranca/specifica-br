@@ -5,6 +5,7 @@ import type { ExecutarTasksOptions } from '../../types/executar-tasks.js';
 import type {
   BuildContextPackArgsInput,
   BuildTaskArgsInput,
+  DesfechoDoFilho,
   McpCheckResult,
   TaskResult,
   ToolAdapter,
@@ -204,11 +205,13 @@ export class ClaudeCodeAdapter implements ToolAdapter {
     exitCode: number,
     rawStdout: string,
     rawStderr: string,
-    sessionId = '?'
+    sessionId = '?',
+    subtype = 'parse_error',
+    desfecho: DesfechoDoFilho = {}
   ): TaskResult {
     return {
       sessionId,
-      subtype: 'parse_error',
+      subtype,
       isError: true,
       exitCode,
       numTurns: 0,
@@ -227,6 +230,9 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       contabilidadeParcial: false,
       rawStdout,
       rawStderr,
+      signal: desfecho.signal ?? null,
+      aborted: desfecho.aborted === true,
+      timedOut: desfecho.timedOut === true,
     };
   }
 
@@ -236,7 +242,40 @@ export class ClaudeCodeAdapter implements ToolAdapter {
    * todas as entradas (porque `usage` ignora subagentes); so na ausencia de
    * `modelUsage` se cai para `usage`, com `0` para campo faltante.
    */
-  public parseResult(exitCode: number, rawStdout: string, rawStderr: string): TaskResult {
+  public parseResult(
+    exitCode: number,
+    rawStdout: string,
+    rawStderr: string,
+    desfecho: DesfechoDoFilho = {}
+  ): TaskResult {
+    // CT-049: filho morto por sinal, por cancelamento ou por teto de tempo nao
+    // e saida limpa. O `claude` trata o SIGTERM e sai com 0 deixando o stdout
+    // vazio: sem esta guarda, a morte do processo entraria pelo ramo de
+    // `exitCode === 0`, falharia no `JSON.parse` e seria gravada como
+    // `parse_error / exit_code: 0` - indistinguivel de uma saida limpa com JSON
+    // invalido. O codigo devolvido nunca e `0` nesse caso.
+    const morto =
+      desfecho.aborted === true ||
+      desfecho.timedOut === true ||
+      (desfecho.signal ?? null) !== null;
+
+    if (morto) {
+      const subtype =
+        desfecho.aborted === true
+          ? 'interrompido'
+          : desfecho.timedOut === true
+            ? 'timeout'
+            : 'sinal';
+      return this.resultadoDegradado(
+        exitCode === 0 ? -1 : exitCode,
+        rawStdout,
+        rawStderr,
+        '?',
+        subtype,
+        desfecho
+      );
+    }
+
     if (exitCode !== 0) {
       return this.resultadoDegradado(exitCode, rawStdout, rawStderr);
     }
@@ -315,6 +354,9 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       contabilidadeParcial: false,
       rawStdout,
       rawStderr,
+      signal: null,
+      aborted: false,
+      timedOut: false,
     };
   }
 
@@ -425,19 +467,28 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       signal,
     });
 
-    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr);
+    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr, {
+      signal: resultado.signal,
+      aborted: resultado.aborted,
+      timedOut: resultado.timedOut,
+    });
   }
 
   /**
    * Executa a construcao do Contexto de Execucao via CT-021, com a mesma normalizacao
    * de resposta de CT-020.
+   *
+   * `timeoutMs` maior que zero arma o teto de tempo do `ProcessRunner` (SIGTERM
+   * seguido de SIGKILL apos a cortesia). Zero ou ausente mantem o comportamento
+   * vigente, sem teto.
    */
   public async runPack(
     prompt: string,
     entrada: BuildContextPackArgsInput,
     cwd: string,
     onStderrChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<TaskResult> {
     const args = this.buildContextPackArgs(prompt, entrada);
     const env = this.buildEnv(entrada.cacheTuning);
@@ -448,8 +499,13 @@ export class ClaudeCodeAdapter implements ToolAdapter {
       stdin: 'ignore',
       onStderrChunk,
       signal,
+      timeoutMs: timeoutMs && timeoutMs > 0 ? timeoutMs : undefined,
     });
 
-    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr);
+    return this.parseResult(resultado.exitCode, resultado.stdout, resultado.stderr, {
+      signal: resultado.signal,
+      aborted: resultado.aborted,
+      timedOut: resultado.timedOut,
+    });
   }
 }

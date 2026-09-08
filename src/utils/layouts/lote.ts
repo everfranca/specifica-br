@@ -27,7 +27,6 @@ import {
   camposInicio,
   linhaFim,
   idDaTask,
-  utilDoContexto,
   escreverLinha,
 } from './coluna.js';
 import type {
@@ -38,10 +37,11 @@ import type {
 import type {
   DadosDeAbertura,
   EstadoDeEspera,
+  EtapaInfo,
 } from '../../types/executar-tasks.js';
 import { formatarDuracao } from '../formatos.js';
-import { QUADROS_SPINNER, GLYPH } from '../terminal/index.js';
-import type { StatusKind } from '../terminal/index.js';
+import { QUADROS_SPINNER, GLYPH, larguraUtil } from '../terminal/index.js';
+import type { Painter, StatusKind } from '../terminal/index.js';
 
 const OCULTAR_CURSOR = '\x1b[?25l';
 const RESTAURAR_CURSOR = '\x1b[?25h';
@@ -49,14 +49,109 @@ const LIMPAR_LINHA = '\x1b[2K';
 const INTERVALO_MIN_MS = 100;
 const JANELA_MAX = 15;
 
-type EstadoTask = 'pendente' | 'ativa' | StatusKind;
+/**
+ * Estado de um item do bloco. `pulada` nunca ocorre no fluxo real (o
+ * `taskSkipped` encerra o bloco antes de escrever); existe para o snapshot
+ * estatico da pre-visualizacao de `config`, que apresenta a task pulada com o
+ * marcador de aviso.
+ */
+export type EstadoItemLote = 'pendente' | 'ativa' | StatusKind | 'pulada';
 
-interface ItemLote {
+export interface ItemLote {
   numero: number;
   arquivo: string;
-  estado: EstadoTask;
+  estado: EstadoItemLote;
   /** Instante em que a task passou a `ativa`, base do tempo decorrido. */
   inicioMs: number;
+}
+
+/**
+ * Recorte do contexto de que a montagem do bloco precisa: cor e largura. A
+ * funcao pura nao toca em stream, relogio nem sequencia de escape.
+ */
+export interface ContextoDoBloco {
+  painter: Painter;
+  largura: number;
+}
+
+const marcadorDe = (estado: EstadoItemLote, quadro: string): string => {
+  switch (estado) {
+    case 'ativa':
+      return quadro;
+    case 'ok':
+      return '+';
+    case 'aviso':
+    case 'pulada':
+      return '!';
+    case 'erro':
+      return 'x';
+    case 'info':
+      return 'i';
+    default:
+      return ' ';
+  }
+};
+
+const concluidasDe = (itens: ItemLote[]): number =>
+  itens.filter(
+    (i) => i.estado !== 'pendente' && i.estado !== 'ativa' && i.estado !== 'pulada',
+  ).length;
+
+const barraDoBloco = (itens: ItemLote[], total: number, contexto: ContextoDoBloco): string => {
+  const largura = Math.max(10, Math.min(larguraUtil(contexto.largura) - 12, 40));
+  const totalSeguro = Math.max(1, total);
+  const feitas = concluidasDe(itens);
+  const cheio = Math.round((feitas / totalSeguro) * largura);
+  const barra = '#'.repeat(cheio) + '-'.repeat(Math.max(0, largura - cheio));
+  return contexto.painter.petroleo(`[${barra}] ${feitas}/${totalSeguro}`);
+};
+
+const linhaDoItem = (
+  item: ItemLote,
+  quadro: string,
+  contexto: ContextoDoBloco,
+  agora: number,
+): string => {
+  const base = `${marcadorDe(item.estado, quadro)} ${idDaTask(item.arquivo)}`;
+  if (item.estado !== 'ativa') {
+    return base;
+  }
+  const segundos = Math.floor((agora - item.inicioMs) / 1000);
+  return `${contexto.painter.petroleo(base)} ${contexto.painter.muted(formatarDuracao(segundos))}`;
+};
+
+/**
+ * Montagem pura das linhas do bloco de altura fixa: a barra de progresso e as
+ * linhas de task, com a janela das ativas acima de quinze. Sem I/O e sem
+ * sequencia de cursor; `LoteLayout.render` acrescenta o redesenho, e a previa
+ * de `config` consome a saida direto. O `quadro` e o caractere congelado da
+ * task ativa (quem anima e o temporizador trocando-o); `agora` separa o relogio
+ * da montagem para a saida ser deterministica sob teste.
+ */
+export function linhasDoBloco(
+  itens: ItemLote[],
+  total: number,
+  quadro: string,
+  contexto: ContextoDoBloco,
+  agora: number = Date.now(),
+): string[] {
+  const linhas = [barraDoBloco(itens, total, contexto)];
+  if (itens.length <= JANELA_MAX) {
+    for (const item of itens) {
+      linhas.push(linhaDoItem(item, quadro, contexto, agora));
+    }
+    return linhas;
+  }
+  const ativas = itens.filter((i) => i.estado === 'ativa');
+  for (const item of ativas.slice(0, JANELA_MAX)) {
+    linhas.push(linhaDoItem(item, quadro, contexto, agora));
+  }
+  linhas.push(
+    contexto.painter.muted(
+      `concluidas: ${concluidasDe(itens)}/${Math.max(1, total)}`,
+    ),
+  );
+  return linhas;
 }
 
 export class LoteLayout extends LayoutBase {
@@ -149,71 +244,13 @@ export class LoteLayout extends LayoutBase {
     }
   }
 
-  private marcador(estado: EstadoTask): string {
-    switch (estado) {
-      case 'ativa':
-        return this.quadros[this.quadroIndice % this.quadros.length];
-      case 'ok':
-        return '+';
-      case 'aviso':
-        return '!';
-      case 'erro':
-        return 'x';
-      case 'info':
-        return 'i';
-      default:
-        return ' ';
-    }
-  }
-
-  private concluidas(): number {
-    return this.itens.filter(
-      (i) => i.estado !== 'pendente' && i.estado !== 'ativa',
-    ).length;
-  }
-
-  private barra(): string {
-    const util = utilDoContexto(this.contexto);
-    const largura = Math.max(10, Math.min(util - 12, 40));
-    const total = Math.max(1, this.total);
-    const cheio = Math.round((this.concluidas() / total) * largura);
-    const barra = '#'.repeat(cheio) + '-'.repeat(Math.max(0, largura - cheio));
-    return this.contexto.painter.petroleo(
-      `[${barra}] ${this.concluidas()}/${total}`,
+  private montarBloco(): string[] {
+    return linhasDoBloco(
+      this.itens,
+      this.total,
+      this.quadros[this.quadroIndice % this.quadros.length],
+      { painter: this.contexto.painter, largura: this.contexto.largura },
     );
-  }
-
-  /**
-   * Linha de um item. A task ativa carrega o quadro animado e o tempo decorrido
-   * (RF-014); as demais, apenas o marcador de estado.
-   */
-  private linhaDoItem(item: ItemLote): string {
-    const base = `${this.marcador(item.estado)} ${idDaTask(item.arquivo)}`;
-    if (item.estado !== 'ativa') {
-      return base;
-    }
-    const segundos = Math.floor((Date.now() - item.inicioMs) / 1000);
-    return `${this.contexto.painter.petroleo(base)} ${this.contexto.painter.muted(formatarDuracao(segundos))}`;
-  }
-
-  private linhasDoBloco(): string[] {
-    const linhas = [this.barra()];
-    if (this.itens.length <= JANELA_MAX) {
-      for (const item of this.itens) {
-        linhas.push(this.linhaDoItem(item));
-      }
-      return linhas;
-    }
-    const ativas = this.itens.filter((i) => i.estado === 'ativa');
-    for (const item of ativas.slice(0, JANELA_MAX)) {
-      linhas.push(this.linhaDoItem(item));
-    }
-    linhas.push(
-      this.contexto.painter.muted(
-        `concluidas: ${this.concluidas()}/${Math.max(1, this.total)}`,
-      ),
-    );
-    return linhas;
   }
 
   private garantirHandlers(): void {
@@ -251,7 +288,7 @@ export class LoteLayout extends LayoutBase {
       this.garantirHandlers();
     }
 
-    const linhas = this.linhasDoBloco();
+    const linhas = this.montarBloco();
     let saida = '';
     if (this.linhasAnteriores > 0) {
       saida += `\x1b[${this.linhasAnteriores}A`;
@@ -283,6 +320,20 @@ export class LoteLayout extends LayoutBase {
   // Os tres metodos de espera apenas encerram o bloco de altura fixa antes de
   // escrever, exatamente como `message` e `summary` (CT-046): o comportamento
   // de espera em si e o da base, unico para as quatro estrategias.
+
+  // A etapa longa fora de task segue a mesma regra dos metodos de espera:
+  // encerra o bloco de altura fixa antes de escrever, e o comportamento em si
+  // e o da base, unico para as quatro estrategias (CT-046).
+
+  etapaStart(info: EtapaInfo): void {
+    this.encerrarBloco();
+    super.etapaStart(info);
+  }
+
+  etapaEnd(kind: StatusKind, texto: string): void {
+    this.encerrarBloco();
+    super.etapaEnd(kind, texto);
+  }
 
   waitStart(estado: EstadoDeEspera): void {
     this.encerrarBloco();

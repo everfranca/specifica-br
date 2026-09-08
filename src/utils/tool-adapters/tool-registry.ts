@@ -109,7 +109,12 @@ const REGISTRO: Record<ToolSlug, RegistroFerramenta> = {
   },
 };
 
-const NOMES_DISPONIVEIS = 'ClaudeCode, OpenCode';
+/**
+ * Nomes de exibicao das ferramentas de contrato validado, na ordem da mensagem
+ * nominal de RF-019. Fonte unica: a recusa do `getAdapter` e o guarda da etapa
+ * interativa de `config` reutilizam este texto em vez de copia-lo.
+ */
+export const NOMES_DISPONIVEIS = 'ClaudeCode, OpenCode';
 
 let adapterClaudeCode: ClaudeCodeAdapter | undefined;
 let adapterOpenCode: OpenCodeAdapter | undefined;

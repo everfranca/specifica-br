@@ -27,6 +27,7 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     maxWait: '6h',
     waitOnLimit: true,
     packMaxTokens: 8000,
+    packTimeout: 900,
     tasks: '',
     allow: [],
     preflight: false,
@@ -35,6 +36,7 @@ function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOpti
     mcpTimeout: 15,
     mcpCheck: true,
     dryRun: false,
+    yes: false,
     ...over,
   };
 }
@@ -62,6 +64,8 @@ function fakeRunner(resposta: {
   stderr?: string;
   timedOut?: boolean;
   spawnFailed?: boolean;
+  aborted?: boolean;
+  signal?: string | null;
   primeiraLinha?: string;
 }) {
   const calls: FakeRunnerCall[] = [];
@@ -71,10 +75,11 @@ function fakeRunner(resposta: {
       calls.push({ cmd, args, opts });
       return {
         exitCode: resposta.exitCode ?? 0,
-        signal: null,
+        signal: resposta.signal ?? null,
         stdout: resposta.stdout ?? '',
         stderr: resposta.stderr ?? '',
         timedOut: resposta.timedOut ?? false,
+        aborted: resposta.aborted ?? false,
         spawnFailed: resposta.spawnFailed ?? false,
       };
     },
@@ -666,4 +671,66 @@ test('CT-021: buildContextPackArgs omite a flag de cache com cacheTuning desliga
 // de divergencia de RF-013 pode ser emitido.
 test('relatoDeModeloEfetivo e true no ClaudeCode', () => {
   assert.equal(new ClaudeCodeAdapter().capacidades.relatoDeModeloEfetivo, true);
+});
+
+// ---------------------------------------------------------------------------
+// Fidelidade ao sinal (CT-049): filho morto nunca e saida limpa.
+// ---------------------------------------------------------------------------
+
+test('parseResult distingue filho morto por SIGTERM de saida limpa com JSON invalido', () => {
+  const adapter = new ClaudeCodeAdapter(fakeRunner({}) as never);
+
+  // O `claude` trata o SIGTERM e sai com 0 deixando o stdout vazio.
+  const morto = adapter.parseResult(0, '', '', { signal: 'SIGTERM', aborted: true });
+  const jsonInvalido = adapter.parseResult(0, 'nao e json {', '');
+
+  assert.notEqual(morto.exitCode, 0, 'um filho morto por sinal saiu como exitCode 0');
+  assert.equal(morto.exitCode, -1);
+  assert.equal(morto.signal, 'SIGTERM');
+  assert.equal(morto.aborted, true);
+  assert.equal(morto.subtype, 'interrompido');
+
+  assert.equal(jsonInvalido.exitCode, 0);
+  assert.equal(jsonInvalido.signal, null);
+  assert.equal(jsonInvalido.aborted, false);
+  assert.equal(jsonInvalido.subtype, 'parse_error');
+});
+
+test('parseResult marca timeout e sinal sem cancelamento com subtypes proprios', () => {
+  const adapter = new ClaudeCodeAdapter(fakeRunner({}) as never);
+
+  assert.equal(adapter.parseResult(0, '', '', { timedOut: true }).subtype, 'timeout');
+  assert.equal(adapter.parseResult(0, '', '', { signal: 'SIGKILL' }).subtype, 'sinal');
+});
+
+test('runPack propaga o sinal do runner e arma o teto de tempo quando informado', async () => {
+  const runner = fakeRunner({ exitCode: 0, stdout: '', signal: 'SIGTERM', timedOut: true });
+  const adapter = novoAdapter(runner);
+
+  const resultado = await adapter.runPack(
+    'prompt',
+    { featureDir: '/f', packModel: 'opus', packEffort: 'high', cacheTuning: false },
+    '/f',
+    undefined,
+    undefined,
+    900_000
+  );
+
+  assert.equal(runner.calls[0]?.opts.timeoutMs, 900_000);
+  assert.equal(resultado.timedOut, true);
+  assert.equal(resultado.signal, 'SIGTERM');
+  assert.notEqual(resultado.exitCode, 0);
+});
+
+test('runPack sem teto informado nao passa timeoutMs ao runner', async () => {
+  const runner = fakeRunner({ exitCode: 0, stdout: '{}' });
+  const adapter = novoAdapter(runner);
+
+  await adapter.runPack(
+    'prompt',
+    { featureDir: '/f', packModel: 'opus', packEffort: 'high', cacheTuning: false },
+    '/f'
+  );
+
+  assert.equal(runner.calls[0]?.opts.timeoutMs, undefined);
 });

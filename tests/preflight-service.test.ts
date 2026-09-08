@@ -26,6 +26,7 @@ const OPCOES_BASE: ExecutarTasksOptions = {
   maxWait: '6h',
   waitOnLimit: true,
   packMaxTokens: 8000,
+  packTimeout: 900,
   tasks: '',
   allow: [],
   preflight: true,
@@ -34,6 +35,7 @@ const OPCOES_BASE: ExecutarTasksOptions = {
   mcpTimeout: 15,
   mcpCheck: true,
   dryRun: false,
+  yes: false,
 };
 
 let raiz: string;

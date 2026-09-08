@@ -171,6 +171,7 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `--max-wait <duração>` | `6h` | Teto de espera acumulada pela renovação da cota, somando todas as esperas de todas as tasks do lote. Aceita segundos (`90`), minutos (`30m`), horas (`6h`) e a forma composta (`1h30m`). O teto absoluto é de 12 horas. |
 | `--no-wait-on-limit` | espera ligada | Não aguarda a renovação da cota: encerra o lote no primeiro limite de uso. |
 | `--pack-max-tokens <n>` | `8000` | Teto de tamanho do Contexto de Execução (`0` desliga o teto). |
+| `--pack-timeout <segundos>` | `900` | Teto de tempo da construção do Contexto de Execução (`0` desliga o teto). Estourado o teto, o processo é encerrado, o lote segue sem o destilado e a mensagem nomeia o motivo. |
 | `--tasks <seleção>` | `''` | Seleção de tasks, ex.: `1-3,7`. |
 | `--allow <regra>` | `[]` | Regra adicional de `--allowedTools` (repetível). |
 | `--preflight` | `false` | Executa apenas as verificações prévias e encerra. |
@@ -179,6 +180,9 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 | `--mcp-timeout <seg>` | `15` | Timeout da verificação de MCPs. |
 | `--no-mcp-check` | ligado | Não verifica os MCPs declarados no preflight. |
 | `--dry-run` | `false` | Mostra o que seria executado sem invocar a CLI. Nenhuma chamada é feita — nem para as tasks, nem para construir o Contexto de Execução. Zero tokens gastos. |
+| `--yes`, `-y` | `false` | Pula a pergunta de confirmação antes de iniciar o lote (ver **Confirmação antes de gastar**, abaixo). |
+
+**Confirmação antes de gastar:** em terminal interativo, depois das verificações prévias e antes da primeira etapa que custa tokens, o comando relaciona as tasks selecionadas que estão `DONE` e farão parte do lote só para serem puladas e faz uma única pergunta: `> iniciar a execucao? 3 tasks com claudecode/sonnet/medium (Y/n)` — com o sufixo `(acesso total)` quando o modo de permissão efetivo é `bypassPermissions`. `Enter`, `y`, `yes`, `s` e `sim` seguem o fluxo; `n`, `no` e `nao` cancelam sem consumir nada, com o aviso `execucao cancelada pelo usuario` e **código de saída 0** (recusar não é erro); qualquer outra resposta repete a pergunta; `Ctrl+C` durante a pergunta encerra com 130, como no resto do lote. O comando **não pergunta** — e não lê stdin — com `CI` definida, fora de terminal interativo, com `--dry-run` nem com `--yes`; um fim de arquivo no stdin sem resposta nunca inicia o lote.
 
 **Onde ficam os registros:** em `~/.specifica-br/logs/<projeto>/`, com um arquivo de eventos (`run_<ID>.jsonl`) e um de erro (`run_<ID>.stderr`) por execução. **Nada é gravado dentro do projeto.**
 
@@ -237,10 +241,10 @@ O comando roda **a partir de qualquer diretório de qualquer projeto** e **não 
 
 Exibe e altera três preferências gravadas em `~/.specifica-br/config.json`: o **layout** e o **estilo de cabeçalho** (preferências únicas por máquina, valem para todos os projetos) e a **ferramenta de IA** (registrada **por projeto**). O padrão de layout é `coluna` e o padrão de cabeçalho é `painel`.
 
-Sem argumentos, o comando exibe a configuração vigente e abre **duas seleções interativas em sequência**: primeiro o layout, com pré-visualização dos quatro; depois o estilo do cabeçalho, com pré-visualização das três formas. Cada seleção marca o valor em vigor, e sair de uma delas preserva o valor já gravado.
+Sem argumentos, o comando exibe a configuração vigente e abre um **carrossel interativo de três etapas**, uma opção por vez, navegável pelas setas ↑/↓ (a navegação é cíclica), com contador de posição e pré-visualização em cada cartão: primeiro o layout, com pré-visualização dos quatro; depois o estilo do cabeçalho, com pré-visualização das três formas; por último a **ferramenta de IA do projeto**, com os cinco cartões em linha. `Enter` aplica o cartão e avança — cada etapa grava ao ser confirmada, com um `[OK]` imediato; `Esc` ou `Ctrl+C` encerra o fluxo mantendo o que as etapas anteriores já gravaram. Os cartões de ferramenta sem contrato de execução validado nesta versão (Cursor, Gemini CLI e Kiro) aparecem desabilitados, com o aviso nominal.
 
 ```bash
-specifica-br config                       # exibe a configuração e abre a seleção de layout e, em seguida, a de cabeçalho
+specifica-br config                       # exibe a configuração e abre o carrossel: layout, cabecalho e ferramenta
 specifica-br config layout <nome>         # grava o layout, sem interação
 specifica-br config cabecalho <estilo>    # grava o estilo do cabeçalho: painel, regua ou compacto, sem interação
 specifica-br config ferramenta <slug>     # grava a ferramenta do projeto atual, sem interação
@@ -651,8 +655,8 @@ seu-projeto/
 ## Opções por Comando
 
 - `init --local`: Instala comandos e skills no projeto atual em vez do diretório global
-- `executar-tasks`: `--tool`, `--model` (**obrigatória**), `--effort` (**obrigatória**), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--max-wait` (`6h`), `--no-wait-on-limit` (espera ligada), `--pack-max-tokens` (`8000`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run` — ver a tabela completa em **Comandos Básicos**
-- `config [chave] [valor]`: sem argumentos exibe a configuração e abre a seleção de layout seguida da seleção de estilo de cabeçalho; `config layout <nome>`, `config cabecalho <estilo>` e `config ferramenta <slug>` gravam sem interação
+- `executar-tasks`: `--tool`, `--model` (**obrigatória**), `--effort` (**obrigatória**), `--fallback-model`, `--auto-approve`, `--permission-mode`, `--no-skill-dirs`, `--max-budget-usd` (`0`), `--window-budget-tokens` (`0`), `--stop-on-failure`, `--sleep` (`0`), `--no-cache-tuning`, `--no-context-pack`, `--context-injection` (`prompt`), `--max-wait` (`6h`), `--no-wait-on-limit` (espera ligada), `--pack-max-tokens` (`8000`), `--pack-timeout` (`900`), `--tasks`, `--allow`, `--preflight`, `--skip-preflight`, `--require-cmd`, `--mcp-timeout` (`15`), `--no-mcp-check`, `--dry-run`, `--yes`/`-y` (`false`) — ver a tabela completa em **Comandos Básicos**
+- `config [chave] [valor]`: sem argumentos exibe a configuração e abre o carrossel interativo — layout, estilo de cabeçalho e ferramenta do projeto, um cartão por vez com pré-visualização; `config layout <nome>`, `config cabecalho <estilo>` e `config ferramenta <slug>` gravam sem interação
 
 ## Desenvolvimento
 

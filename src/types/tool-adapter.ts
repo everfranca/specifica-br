@@ -44,6 +44,28 @@ export interface TaskResult {
   contabilidadeParcial: boolean;
   rawStdout: string;
   rawStderr: string;
+  /**
+   * CT-049: sinal que encerrou o processo filho, quando houve um. Ausente ou
+   * `null` significa saida por codigo. Um filho morto por sinal NUNCA pode ser
+   * lido como saida limpa, e este campo e o que torna os dois casos
+   * distinguiveis na leitura posterior do registro.
+   */
+  signal?: NodeJS.Signals | null;
+  /** CT-049: o filho foi morto por cancelamento explicito (`AbortSignal`). */
+  aborted?: boolean;
+  /** CT-049: o filho foi morto pelo teto de tempo do chamador. */
+  timedOut?: boolean;
+}
+
+/**
+ * Como o processo filho terminou, do ponto de vista do `ProcessRunner` (CT-049).
+ * Chega a `parseResult` para que sinal, cancelamento e teto de tempo nao sejam
+ * normalizados como uma saida limpa de codigo zero.
+ */
+export interface DesfechoDoFilho {
+  signal?: NodeJS.Signals | null;
+  aborted?: boolean;
+  timedOut?: boolean;
 }
 
 export interface BuildTaskArgsInput {
@@ -75,7 +97,12 @@ export interface ToolAdapter {
   buildTaskArgs(entrada: BuildTaskArgsInput): string[];
   buildContextPackArgs(prompt: string, entrada: BuildContextPackArgsInput): string[];
   buildEnv(cacheTuning: boolean, envBase?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
-  parseResult(exitCode: number, rawStdout: string, rawStderr: string): TaskResult;
+  parseResult(
+    exitCode: number,
+    rawStdout: string,
+    rawStderr: string,
+    desfecho?: DesfechoDoFilho
+  ): TaskResult;
   detectRateLimit(rawOutput: string): boolean;
   getVersion(): Promise<string>;
   listMcps(mcpsDeclarados: string[], timeoutSegundos: number): Promise<McpCheckResult[]>;
@@ -97,6 +124,7 @@ export interface ToolAdapter {
     entrada: BuildContextPackArgsInput,
     cwd: string,
     onStderrChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<TaskResult>;
 }

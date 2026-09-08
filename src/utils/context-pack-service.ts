@@ -7,6 +7,7 @@ import type {
 } from '../types/tool-adapter.js';
 import type {
   EffortLevel,
+  EtapaInfo,
   OrigemHorario,
   PackResult,
   Relogio,
@@ -22,6 +23,9 @@ import { CONTEXT_PACK_PROMPT, CONTEXT_PACK_TEMPLATE } from './context-pack-promp
 
 const NOME_DESTILADO = 'contexto-execucao.md';
 
+/** Rotulo da etapa longa publicado a apresentacao (RF-029). */
+const ROTULO_ETAPA = 'Construindo o Contexto de Execucao';
+
 /**
  * Subconjunto do adapter da ferramenta (task-5) consumido aqui. `runPack` ja
  * normaliza a resposta como `parseResult` (CT-020); esta task nao reimplementa
@@ -35,7 +39,8 @@ export interface ContextPackToolAdapter {
     entrada: BuildContextPackArgsInput,
     cwd: string,
     onStderrChunk?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs?: number
   ): Promise<TaskResult>;
 
   /** Mesmo criterio de CT-044 usado pelo loop de tasks. */
@@ -63,6 +68,12 @@ export interface ContextPackOpcoes {
   effort: EffortLevel;
   packMaxTokens: number;
   cacheTuning: boolean;
+  /**
+   * Teto de tempo da construcao, em segundos (`--pack-timeout`). `0` desliga o
+   * teto. Sem ele, um filho travado nunca e morto: nao ha feedback, nao ha
+   * limite, e o unico recurso do usuario e o `Ctrl+C`.
+   */
+  packTimeoutSegundos: number;
 }
 
 export interface ContextPackContexto {
@@ -78,6 +89,14 @@ export interface ContextPackContexto {
    * `RunLoggerService.appendStderr` (CT-012).
    */
   onMensagem?: (kind: StatusKind, texto: string) => void;
+  /**
+   * Par de etapa longa (RF-029). Separado de `onMensagem` de proposito: uma
+   * mensagem substitui o indicador; uma etapa o LIGA e so o encerra no
+   * desfecho. Sem estes dois canais, a construcao do destilado nao produz byte
+   * algum na tela enquanto roda.
+   */
+  onEtapaInicio?: (info: EtapaInfo) => void;
+  onEtapaFim?: (kind: StatusKind, texto: string) => void;
 }
 
 interface DecisaoDeriva {
@@ -100,7 +119,19 @@ export class ContextPackService {
   private jaTentouConstruir = false;
   private ultimoResultado: PackResult | null = null;
   private abortSolicitado = false;
+  private avisouArchitectureAusente = false;
+  private duracaoNaoContabilizada = 0;
   private readonly cancelamento = new AbortController();
+
+  /**
+   * Duracao, em segundos, das tentativas de construcao mortas por SIGTERM
+   * (interrupcao ou teto de tempo). O consumo delas e real e nunca chega a
+   * contabilidade: matar o filho zera o JSON final de onde vem cada numero.
+   * O resumo usa este valor para nao afirmar custo zero em um lote que custou.
+   */
+  public get consumoNaoContabilizadoSegundos(): number {
+    return this.duracaoNaoContabilizada;
+  }
 
   /**
    * @param espera Instancia unica da politica de espera do lote (CT-048).
@@ -165,8 +196,10 @@ export class ContextPackService {
     }
 
     if (this.abortSolicitado) {
-      return this.resultadoSimples('falhou', 'interrompido');
+      return this.resultadoSimples('interrompido', 'interrompido');
     }
+
+    await this.avisarArchitectureAusente(contexto);
 
     const deriva = await this.precisaReconstruir(featureDir, projectRoot);
     const destilado = path.join(featureDir, NOME_DESTILADO);
@@ -177,8 +210,20 @@ export class ContextPackService {
 
     const derivaNova = deriva.motivo === 'fonte_mais_recente';
     if (this.jaTentouConstruir && !derivaNova) {
+      // A falha ja aconteceu e o resultado em cache e devolvido de novo. O
+      // desfecho volta a ser anunciado: uma falha silenciosa por task e pior
+      // que uma repetida - sem esta linha, o usuario ve a primeira mensagem e
+      // depois nada, e conclui que o destilado passou a ser usado.
+      const cache = this.ultimoResultado;
+      if (cache && cache.decisao !== 'construido' && cache.decisao !== 'reaproveitado') {
+        this.emitir(
+          contexto,
+          'aviso',
+          'seguindo sem o Contexto de Execucao - a construcao ja falhou nesta execucao e nao sera repetida'
+        );
+      }
       return (
-        this.ultimoResultado ?? this.resultadoSimples('falhou', 'ja_tentado', deriva.fonteAlterada)
+        cache ?? this.resultadoSimples('falhou', 'ja_tentado', deriva.fonteAlterada)
       );
     }
 
@@ -232,6 +277,7 @@ export class ContextPackService {
       motivo: 'em_dia',
       fonteAlterada: null,
       tokensGastos: 0,
+      duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
     };
   }
 
@@ -261,6 +307,9 @@ export class ContextPackService {
       cacheTuning: opcoes.cacheTuning,
     };
 
+    const tetoMs =
+      opcoes.packTimeoutSegundos > 0 ? opcoes.packTimeoutSegundos * 1000 : 0;
+
     let tentativa = 1;
     let resultado: TaskResult;
     let duracaoSegundos: number;
@@ -268,15 +317,36 @@ export class ContextPackService {
     for (;;) {
       const inicio = this.relogio.agora();
 
+      // RF-029: a linha de inicio sai ANTES da invocacao. Depois dela o
+      // processo filho pode passar minutos sem escrever byte algum - com
+      // `--output-format json` o stdout so existe quando o processo fecha -, e
+      // e exatamente esse silencio que faz o usuario matar uma construcao que
+      // estava funcionando.
+      this.iniciarEtapa(contexto);
+
       resultado = await this.adapter.runPack(
         prompt,
         entrada,
         cwd,
         (chunk) => this.logger.appendStderr(chunk),
-        this.cancelamento.signal
+        this.cancelamento.signal,
+        tetoMs
       );
 
       duracaoSegundos = Math.max(0, Math.round((this.relogio.agora() - inicio) / 1000));
+
+      // O filho morto por SIGTERM nao tem desfecho a avaliar: sem esta guarda,
+      // ele cairia no caminho normal e viraria `arquivo_nao_gerado`, afirmando
+      // "o arquivo nao foi gerado" onde o correto e "o usuario interrompeu".
+      const morto = await this.tratarMorteDoFilho(
+        contexto,
+        deriva,
+        resultado,
+        duracaoSegundos
+      );
+      if (morto) {
+        return morto;
+      }
 
       const barrada = await this.tratarLimiteDeUso(contexto, resultado, tentativa);
 
@@ -297,6 +367,7 @@ export class ContextPackService {
           motivo: 'limite_de_uso',
           fonteAlterada: deriva.fonteAlterada,
           tokensGastos: barrada.tokensGastos,
+          duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
         };
         return this.ultimoResultado;
       }
@@ -311,7 +382,7 @@ export class ContextPackService {
     const sucesso = resultado.exitCode === 0 && !resultado.isError && arquivoExiste;
 
     if (!sucesso) {
-      this.emitir(
+      this.encerrarEtapa(
         contexto,
         'aviso',
         'falha ao construir o Contexto de Execucao - seguindo sem ele'
@@ -341,6 +412,7 @@ export class ContextPackService {
         motivo,
         fonteAlterada: deriva.fonteAlterada,
         tokensGastos: tokensDaTask,
+        duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
       };
       return this.ultimoResultado;
     }
@@ -401,12 +473,29 @@ export class ContextPackService {
       tokens_gastos: tokensDaTask,
       tokens_gastos_acumulado_depois: this.accounting.total.tokensGastosAcumulado,
       custo_usd: this.accounting.formatCustoRegistro(custoDaTask),
+      // CT-051: a negacao de permissao na construcao deixa de existir so no
+      // `.stderr`.
+      permission_denials: resultado.permissionDenials,
+      ferramentas_negadas: resultado.ferramentasNegadas,
     });
+
+    // CT-051: a construcao roda com `--permission-mode acceptEdits` e `stdin`
+    // fechado. Uma ferramenta nao-edicao de que o prompt precise e negada em
+    // silencio, e o destilado sai mais pobre sem que nada diga por que.
+    if ((resultado.permissionDenials ?? 0) > 0) {
+      this.emitir(
+        contexto,
+        'aviso',
+        `a construcao do Contexto de Execucao teve ${resultado.permissionDenials} permissao(oes) negada(s)${
+          resultado.ferramentasNegadas ? ` (${resultado.ferramentasNegadas})` : ''
+        } - o destilado pode estar incompleto`
+      );
+    }
 
     // RF-013: sem relato confiavel a linha apresenta o modelo SOLICITADO e o
     // identifica como tal - nunca o apresenta como efetivo.
     const modeloExibido = temRelato ? reportado : `${opcoes.model} (solicitado)`;
-    this.emitir(
+    this.encerrarEtapa(
       contexto,
       'ok',
       `Contexto de Execucao construido em ${modeloExibido} - ${formatarMilhar(bytes)} bytes - ${formatarDuracao(duracaoSegundos)}`
@@ -421,6 +510,69 @@ export class ContextPackService {
       motivo: deriva.motivo,
       fonteAlterada: deriva.fonteAlterada,
       tokensGastos: tokensDaTask,
+      duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
+    };
+    return this.ultimoResultado;
+  }
+
+  /**
+   * Interrupcao e teto de tempo (CT-050). Um filho morto por SIGTERM sai sem
+   * JSON: `exitCode: 0` com stdout vazio no caso do `claude`, que trata o sinal.
+   * Avaliar esse desfecho pelo caminho normal produz `pack_build_failed /
+   * arquivo_nao_gerado` - uma afirmacao falsa sobre um processo que foi morto -
+   * e um aviso de falha na tela logo depois do `Ctrl+C`.
+   *
+   * O consumo da tentativa e real e nao esta em lugar nenhum: todo numero vem do
+   * JSON final. O que se registra e a DURACAO, para que o resumo nao afirme
+   * custo zero.
+   *
+   * @returns O `PackResult` de encerramento, ou `null` quando o filho terminou
+   *   normalmente e a avaliacao deve seguir.
+   */
+  private async tratarMorteDoFilho(
+    contexto: ContextPackContexto,
+    deriva: DecisaoDeriva,
+    resultado: TaskResult,
+    duracaoSegundos: number
+  ): Promise<PackResult | null> {
+    const interrompido = this.abortSolicitado || resultado.aborted === true;
+    const estourouTeto = resultado.timedOut === true;
+
+    if (!interrompido && !estourouTeto) {
+      return null;
+    }
+
+    this.jaTentouConstruir = true;
+    this.duracaoNaoContabilizada += duracaoSegundos;
+
+    await this.logger.logEvent({
+      event: 'pack_build_interrompido',
+      ts: '',
+      motivo: interrompido ? 'interrompido_pelo_usuario' : 'timeout',
+      duracao_segundos: duracaoSegundos,
+      consumo_nao_contabilizado: true,
+    });
+
+    // Depois de um `Ctrl+C` o aviso de falha seria enganoso: a construcao nao
+    // falhou, foi morta. O teto de tempo, esse, precisa ser dito - e nominal.
+    this.encerrarEtapa(
+      contexto,
+      'aviso',
+      interrompido
+        ? `construcao do Contexto de Execucao interrompida apos ${formatarDuracao(duracaoSegundos)}`
+        : `teto de tempo da construcao do Contexto de Execucao esgotado apos ${formatarDuracao(duracaoSegundos)} - seguindo sem ele`
+    );
+
+    this.ultimoResultado = {
+      decisao: interrompido ? 'interrompido' : 'falhou',
+      caminho: null,
+      bytes: 0,
+      estTokens: 0,
+      acimaDoTeto: false,
+      motivo: interrompido ? 'interrompido' : 'timeout',
+      fonteAlterada: deriva.fonteAlterada,
+      tokensGastos: 0,
+      duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
     };
     return this.ultimoResultado;
   }
@@ -528,7 +680,55 @@ export class ContextPackService {
       motivo,
       fonteAlterada,
       tokensGastos: 0,
+      duracaoNaoContabilizadaSegundos: this.duracaoNaoContabilizada,
     };
+  }
+
+  /**
+   * `specs/core/architecture.md` e fonte da regra de deriva e do proprio
+   * destilado. Executado fora da raiz do projeto, o arquivo simplesmente nao e
+   * encontrado e era ignorado em silencio - o destilado saia mais pobre sem que
+   * nada dissesse por que. O aviso sai uma unica vez por execucao.
+   */
+  private async avisarArchitectureAusente(contexto: ContextPackContexto): Promise<void> {
+    if (this.avisouArchitectureAusente) {
+      return;
+    }
+    this.avisouArchitectureAusente = true;
+    const arquitetura = path.join(contexto.projectRoot, 'specs', 'core', 'architecture.md');
+    if (await fs.pathExists(arquitetura)) {
+      return;
+    }
+    this.emitir(
+      contexto,
+      'aviso',
+      `specs/core/architecture.md nao encontrado a partir de ${contexto.projectRoot} - o Contexto de Execucao sera construido sem ele`
+    );
+  }
+
+  /** Publica o inicio da etapa longa (RF-029), antes de invocar a ferramenta. */
+  private iniciarEtapa(contexto: ContextPackContexto): void {
+    contexto.onEtapaInicio?.({
+      rotulo: ROTULO_ETAPA,
+      model: contexto.opcoes.model,
+      effort: contexto.opcoes.effort,
+    });
+  }
+
+  /**
+   * Encerra a etapa longa. Sem assinante do par de etapa, cai no canal unico de
+   * mensagens: o desfecho nunca deixa de ser publicado.
+   */
+  private encerrarEtapa(
+    contexto: ContextPackContexto,
+    kind: StatusKind,
+    texto: string
+  ): void {
+    if (contexto.onEtapaFim) {
+      contexto.onEtapaFim(kind, texto);
+      return;
+    }
+    this.emitir(contexto, kind, texto);
   }
 
   /**

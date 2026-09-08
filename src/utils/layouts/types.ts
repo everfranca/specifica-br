@@ -11,7 +11,13 @@
 
 import type { Painter, GlyphLevel, StatusKind } from '../terminal/index.js';
 import type { HeaderStyle } from '../../types/config.js';
-import type { DadosDeAbertura, EstadoDeEspera } from '../../types/executar-tasks.js';
+import type {
+  DadosDeAbertura,
+  EstadoDeEspera,
+  EtapaInfo,
+} from '../../types/executar-tasks.js';
+
+export type { EtapaInfo };
 
 /** Informacao entregue ao layout no inicio de uma task. */
 export interface TaskStartInfo {
@@ -70,6 +76,16 @@ export interface LayoutRenderer {
   taskEnd(info: TaskEndInfo): void;
   taskSkipped(arquivo: string, motivo: string, selecionada: boolean): void;
   message(kind: StatusKind, texto: string): void;
+  /**
+   * Inicio de uma etapa longa que NAO e uma task - hoje, a construcao do
+   * Contexto de Execucao (RF-029). Par explicito, analogo a
+   * `waitStart`/`waitEnd`: sem ele, uma construcao de varios minutos produz
+   * zero bytes no terminal e o usuario nao tem como saber se a ferramenta esta
+   * viva.
+   */
+  etapaStart(info: EtapaInfo): void;
+  /** Fim da etapa: substitui o indicador pela linha final, na mesma linha. */
+  etapaEnd(kind: StatusKind, texto: string): void;
   waitStart(estado: EstadoDeEspera): void;
   waitUpdate(estado: EstadoDeEspera): void;
   waitEnd(esperaEfetivaSegundos: number): void;

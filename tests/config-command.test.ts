@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -6,6 +7,7 @@ import {
   type ConfigDeps,
   type SelectLayoutParams,
   type SelectHeaderStyleParams,
+  type SelectFerramentaParams,
 } from '../dist/commands/config.js';
 import {
   validateChave,
@@ -14,8 +16,25 @@ import {
   validateFerramentaValor,
 } from '../dist/utils/config-command-validation.js';
 import { buildPreview } from '../dist/utils/layout-preview.js';
-import { createPainter, LEVEL, GLYPH } from '../dist/utils/terminal/index.js';
+import {
+  createPainter,
+  LEVEL,
+  GLYPH,
+  visibleWidth,
+} from '../dist/utils/terminal/index.js';
 import type { HeaderStyle, LayoutName, ToolSlug } from '../dist/types/config.js';
+
+// Separador nominal deterministico nos cartoes: `detectGlyphLevel` le o
+// ambiente a cada execucao e a suite precisa de um unico nivel.
+process.env.SPECIFICA_GLYPHS = 'ascii';
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+// Variant ASCII do hint: a suite forca SPECIFICA_GLYPHS=ascii no topo do arquivo.
+const HINT = 'cima/baixo navegam - enter aplica - esc encerra';
+const HINT_UNICODE = '↑ ↓ navegam - enter aplica - esc encerra';
+// Forma dobrada: o kleur do prompts reescreve \x1b[24m literal reabrindo o
+// sublinhado, e a forma combinada escapa dessa reescrita.
+const SEM_SUBLINHADO = '\x1b[24;24m';
 
 interface FakeConfig {
   version: number;
@@ -33,14 +52,17 @@ interface FakeState {
   erros: string[];
   selectParams: SelectLayoutParams[];
   selectHeaderParams: SelectHeaderStyleParams[];
+  selectFerramentaParams: SelectFerramentaParams[];
 }
 
 interface DepsOpts {
   arquivo?: FakeConfig | Error;
   projeto?: string;
   isTTY?: boolean;
+  colunas?: number;
   escolha?: LayoutName | undefined;
   escolhaCabecalho?: HeaderStyle | undefined;
+  escolhaFerramenta?: ToolSlug | undefined;
 }
 
 function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } {
@@ -53,6 +75,7 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
     erros: [],
     selectParams: [],
     selectHeaderParams: [],
+    selectFerramentaParams: [],
   };
 
   const configService = {
@@ -97,6 +120,7 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
       state.erros.push(texto);
     },
     isTTY: opts.isTTY ?? false,
+    colunas: opts.colunas === undefined ? undefined : () => opts.colunas,
     async selectLayout(params: SelectLayoutParams): Promise<LayoutName | undefined> {
       state.selectParams.push(params);
       return opts.escolha;
@@ -104,6 +128,10 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
     async selectHeaderStyle(params: SelectHeaderStyleParams): Promise<HeaderStyle | undefined> {
       state.selectHeaderParams.push(params);
       return opts.escolhaCabecalho;
+    },
+    async selectFerramenta(params: SelectFerramentaParams): Promise<ToolSlug | undefined> {
+      state.selectFerramentaParams.push(params);
+      return opts.escolhaFerramenta;
     },
   };
 
@@ -119,6 +147,16 @@ function fazerDeps(opts: DepsOpts = {}): { deps: ConfigDeps; state: FakeState } 
 
 function textoSaida(state: FakeState): string {
   return state.saida.join('');
+}
+
+function primeiraLinha(title: string): string {
+  return title.split('\n')[0];
+}
+
+function maiorLarguraVisivel(titles: string[]): number {
+  return Math.max(
+    ...titles.flatMap((title) => title.split('\n').map(visibleWidth)),
+  );
 }
 
 test('validateChave rejeita chave diferente de layout e ferramenta', () => {
@@ -140,23 +178,143 @@ test('validateFerramentaValor aceita os cinco slugs sem distincao de caixa e rej
   assert.throws(() => validateFerramentaValor('copilot'));
 });
 
-test('config sem argumentos e sem TTY exibe a vigente e encerra com codigo 0, sem abrir a selecao', async () => {
+test('config sem argumentos e sem TTY exibe a vigente e encerra com codigo 0, sem abrir nenhuma selecao', async () => {
   const { deps, state } = fazerDeps({ isTTY: false });
   const code = await runConfig(undefined, undefined, deps);
   assert.equal(code, 0);
   assert.equal(state.selectParams.length, 0);
+  assert.equal(state.selectHeaderParams.length, 0);
+  assert.equal(state.selectFerramentaParams.length, 0);
   assert.match(textoSaida(state), /Layout\s+coluna/);
 });
 
-test('config sem argumentos e com TTY apresenta os quatro layouts pre-visualizados, marcando o atual', async () => {
+test('config com TTY abre o carrossel: um cartao por pagina, contador, marcador de atual e hint', async () => {
   const { deps, state } = fazerDeps({ isTTY: true, escolha: undefined, arquivo: { version: 1, layout: 'regua', projetos: {} } });
   await runConfig(undefined, undefined, deps);
   assert.equal(state.selectParams.length, 1);
   const params = state.selectParams[0];
   assert.equal(params.choices.length, 4);
+  assert.equal(params.optionsPerPage, 1);
+  assert.equal(params.hint, HINT);
+  assert.equal(params.initial, params.choices.findIndex((c) => c.value === 'regua'));
+
   const atual = params.choices.find((c) => c.value === 'regua');
-  assert.ok(atual && atual.title.includes('(atual)'));
+  assert.ok(atual, 'cartao do layout vigente ausente');
+  assert.match(primeiraLinha(atual.title), /regua  3\/4 - atual$/);
+  for (const [indice, escolha] of params.choices.entries()) {
+    assert.match(primeiraLinha(escolha.title), new RegExp(` ${indice + 1}/4`));
+    assert.ok(escolha.title.split('\n').length > 1, 'cartao sem previa');
+  }
+  assert.equal(
+    params.choices.filter((c) => / - atual$/.test(primeiraLinha(c.title))).length,
+    1,
+    'marcador de atual em mais de um cartao',
+  );
+});
+
+test('a segunda selecao, a de cabecalho, tambem e carrossel e abre apos a de layout', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'moldura',
+    escolhaCabecalho: 'compacto',
+    escolhaFerramenta: undefined,
+    arquivo: { version: 1, layout: 'coluna', cabecalho: 'regua', projetos: {} },
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.equal(state.selectHeaderParams.length, 1);
+  const params = state.selectHeaderParams[0];
+  assert.equal(params.choices.length, 3);
+  assert.equal(params.optionsPerPage, 1);
+  assert.equal(params.hint, HINT);
+  const atual = params.choices.find((c) => c.value === 'regua');
+  assert.ok(atual, 'cartao do cabecalho vigente ausente');
+  assert.match(primeiraLinha(atual.title), /regua  2\/3 - atual$/);
+  assert.equal(params.initial, params.choices.findIndex((c) => c.value === 'regua'));
   assert.ok(params.choices.every((c) => c.title.split('\n').length > 1));
+  assert.deepEqual(state.setHeaderStyleCalls, ['compacto']);
+  assert.equal(state.selectFerramentaParams.length, 1);
+  assert.match(textoSaida(state), /- o que foi aplicado antes desta etapa foi mantido/);
+});
+
+test('com cor ativa todo title de cartao abre desligando o sublinhado do prompts', async () => {
+  const forcaAnterior = process.env.FORCE_COLOR;
+  process.env.FORCE_COLOR = '3';
+  try {
+    const { deps, state } = fazerDeps({
+      isTTY: true,
+      escolha: 'coluna',
+      escolhaCabecalho: 'painel',
+      escolhaFerramenta: 'claudecode',
+    });
+    await runConfig(undefined, undefined, deps);
+    const titles = [
+      ...state.selectParams[0].choices.map((c) => c.title),
+      ...state.selectHeaderParams[0].choices.map((c) => c.title),
+      ...state.selectFerramentaParams[0].choices.map((c) => c.title),
+    ];
+    assert.ok(titles.length >= 12, 'cartoes ausentes');
+    for (const title of titles) {
+      assert.ok(title.startsWith(SEM_SUBLINHADO), 'title sem o prefixo que desliga o sublinhado');
+    }
+  } finally {
+    if (forcaAnterior === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = forcaAnterior;
+    }
+  }
+});
+
+test('sem cor nenhum title de cartao carrega escape ANSI', async () => {
+  const semCorAnterior = process.env.NO_COLOR;
+  process.env.NO_COLOR = '1';
+  try {
+    const { deps, state } = fazerDeps({
+      isTTY: true,
+      escolha: 'coluna',
+      escolhaCabecalho: 'painel',
+      escolhaFerramenta: 'claudecode',
+    });
+    await runConfig(undefined, undefined, deps);
+    const titles = [
+      ...state.selectParams[0].choices.map((c) => c.title),
+      ...state.selectHeaderParams[0].choices.map((c) => c.title),
+      ...state.selectFerramentaParams[0].choices.map((c) => c.title),
+    ];
+    for (const title of titles) {
+      assert.ok(!ANSI.test(title), 'title carregando escape sem cor ativa');
+    }
+  } finally {
+    if (semCorAnterior === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = semCorAnterior;
+    }
+  }
+});
+
+test('o hint nomeia o eixo de setas e degrada para palavras em glifo ASCII', async () => {
+  const glyphsAnterior = process.env.SPECIFICA_GLYPHS;
+  process.env.SPECIFICA_GLYPHS = 'full';
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'coluna',
+    escolhaCabecalho: 'painel',
+    escolhaFerramenta: 'claudecode',
+  });
+  try {
+    await runConfig(undefined, undefined, deps);
+  } finally {
+    process.env.SPECIFICA_GLYPHS = glyphsAnterior ?? 'ascii';
+  }
+  assert.equal(state.selectParams[0].hint, HINT_UNICODE);
+  assert.equal(state.selectHeaderParams[0].hint, HINT_UNICODE);
+  assert.equal(state.selectFerramentaParams[0].hint, HINT_UNICODE);
+
+  const { deps: depsAscii, state: stateAscii } = fazerDeps({ isTTY: true, escolha: undefined });
+  await runConfig(undefined, undefined, depsAscii);
+  assert.equal(stateAscii.selectParams[0].hint, HINT);
 });
 
 test('config layout <nome> grava sem interacao', async () => {
@@ -215,11 +373,14 @@ test('chave sem valor na forma nao interativa produz codigo 1', async () => {
   assert.equal(await runConfig('ferramenta', undefined, deps), 1);
 });
 
-test('selecao cancelada pelo usuario nao grava nada e encerra com 0', async () => {
+test('cancelar a primeira etapa nao grava nada, nao abre as seguintes e encerra com 0 sem aviso', async () => {
   const { deps, state } = fazerDeps({ isTTY: true, escolha: undefined });
   const code = await runConfig(undefined, undefined, deps);
   assert.equal(code, 0);
   assert.deepEqual(state.setLayoutCalls, []);
+  assert.equal(state.selectHeaderParams.length, 0);
+  assert.equal(state.selectFerramentaParams.length, 0);
+  assert.ok(!textoSaida(state).includes('[AVISO]'), 'aviso sem nenhuma gravacao');
 });
 
 test('o layout atual e marcado pelo indice correto em initial', async () => {
@@ -240,20 +401,24 @@ test('configuracao global invalida produz codigo 1 sem sobrescrever o arquivo', 
   assert.ok(state.erros.join('').includes('invalido'));
 });
 
-test('a saida do config exibe as quatro linhas Arquivo, Layout, Projeto e Ferramenta', async () => {
+test('a saida do config exibe as cinco linhas Arquivo, Layout, Cabecalho, Projeto e Ferramenta', async () => {
   const { deps, state } = fazerDeps({ projeto: 'projeto-x' });
   await runConfig(undefined, undefined, deps);
   const texto = textoSaida(state);
   assert.match(texto, /Arquivo\s+/);
   assert.match(texto, /Layout\s+coluna/);
+  assert.match(texto, /Cabecalho\s+painel/);
   assert.match(texto, /Projeto\s+projeto-x/);
   assert.match(texto, /Ferramenta\s+/);
 });
 
-test('a saida exibe explicitamente a ausencia de ferramenta registrada', async () => {
+test('a saida exibe explicitamente a ausencia de ferramenta registrada e ensina o caminho curto', async () => {
   const { deps, state } = fazerDeps();
   await runConfig(undefined, undefined, deps);
-  assert.match(textoSaida(state), /Ferramenta\s+nao registrada/);
+  assert.match(
+    textoSaida(state),
+    /Ferramenta\s+nao registrada \(defina no fluxo interativo ou rode: config ferramenta <slug>\)/,
+  );
 });
 
 test('a pre-visualizacao nao emite sequencia ANSI com painter de nivel NONE', () => {
@@ -323,25 +488,6 @@ test('a saida do config exibe a linha Cabecalho entre Layout e Projeto', async (
   assert.ok(indice('Cabecalho') < indice('Projeto'));
 });
 
-test('config com TTY abre a selecao de cabecalho apos a de layout, marcando o atual', async () => {
-  const { deps, state } = fazerDeps({
-    isTTY: true,
-    escolha: 'moldura',
-    escolhaCabecalho: 'compacto',
-    arquivo: { version: 1, layout: 'coluna', cabecalho: 'regua', projetos: {} },
-  });
-  const code = await runConfig(undefined, undefined, deps);
-  assert.equal(code, 0);
-  assert.equal(state.selectHeaderParams.length, 1);
-  const params = state.selectHeaderParams[0];
-  assert.equal(params.choices.length, 3);
-  const atual = params.choices.find((c) => c.value === 'regua');
-  assert.ok(atual && atual.title.includes('(atual)'));
-  assert.equal(params.initial, params.choices.findIndex((c) => c.value === 'regua'));
-  assert.ok(params.choices.every((c) => c.title.split('\n').length > 1));
-  assert.deepEqual(state.setHeaderStyleCalls, ['compacto']);
-});
-
 test('config cabecalho <invalido> emite [ERRO] com chave, valor e aceitos, e encerra com 1', async () => {
   const { deps, state } = fazerDeps({ isTTY: true });
   const code = await runConfig('cabecalho', 'xpto', deps);
@@ -360,7 +506,7 @@ test('config cabecalho sem valor produz codigo 1', async () => {
   assert.deepEqual(state.setHeaderStyleCalls, []);
 });
 
-test('cancelar a segunda selecao preserva o layout escolhido na mesma sessao e nao altera o cabecalho', async () => {
+test('cancelar a segunda selecao preserva o layout escolhido, nao abre a etapa de ferramenta e avisa', async () => {
   const { deps, state } = fazerDeps({
     isTTY: true,
     escolha: 'moldura',
@@ -371,9 +517,11 @@ test('cancelar a segunda selecao preserva o layout escolhido na mesma sessao e n
   assert.equal(code, 0);
   assert.deepEqual(state.setLayoutCalls, ['moldura']);
   assert.deepEqual(state.setHeaderStyleCalls, []);
+  assert.equal(state.selectFerramentaParams.length, 0);
   const arquivo = state.arquivo as FakeConfig;
   assert.equal(arquivo.layout, 'moldura');
   assert.equal(arquivo.cabecalho, 'painel');
+  assert.match(textoSaida(state), /\[AVISO\] configuracao encerrada - o que foi aplicado antes desta etapa foi mantido/);
 });
 
 test('cancelar a primeira selecao nao abre a segunda e encerra com 0', async () => {
@@ -383,11 +531,189 @@ test('cancelar a primeira selecao nao abre a segunda e encerra com 0', async () 
   assert.deepEqual(state.setHeaderStyleCalls, []);
 });
 
-test('sem TTY nenhuma das duas selecoes e aberta e o codigo de saida e 0', async () => {
-  const { deps, state } = fazerDeps({ isTTY: false, escolha: 'lote', escolhaCabecalho: 'regua' });
+test('sem TTY nenhuma das tres selecoes e aberta e o codigo de saida e 0', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: false,
+    escolha: 'lote',
+    escolhaCabecalho: 'regua',
+    escolhaFerramenta: 'opencode',
+  });
   assert.equal(await runConfig(undefined, undefined, deps), 0);
   assert.equal(state.selectParams.length, 0);
   assert.equal(state.selectHeaderParams.length, 0);
+  assert.equal(state.selectFerramentaParams.length, 0);
   assert.deepEqual(state.setLayoutCalls, []);
   assert.deepEqual(state.setHeaderStyleCalls, []);
+  assert.deepEqual(state.setToolCalls, []);
+});
+
+test('a terceira etapa oferece as cinco ferramentas com contador, avisos de contrato e initial da registrada', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'coluna',
+    escolhaCabecalho: 'painel',
+    escolhaFerramenta: undefined,
+    projeto: 'projeto-x',
+    arquivo: {
+      version: 1,
+      layout: 'coluna',
+      cabecalho: 'painel',
+      projetos: { 'projeto-x': { ferramenta: 'opencode', atualizadoEm: 'x' } },
+    },
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+
+  assert.equal(state.selectFerramentaParams.length, 1);
+  const params = state.selectFerramentaParams[0];
+  assert.equal(params.choices.length, 5);
+  assert.equal(params.optionsPerPage, 5);
+  assert.equal(params.hint, HINT);
+  assert.equal(params.warn, 'contrato de execucao ainda nao validado nesta versao');
+
+  const valores = params.choices.map((c) => c.value);
+  assert.deepEqual(valores, ['claudecode', 'opencode', 'cursor', 'gemini-cli', 'kiro']);
+  assert.deepEqual(
+    params.choices.map((c) => c.disabled === true),
+    [false, false, true, true, true],
+  );
+  assert.match(primeiraLinha(params.choices[0].title), /ClaudeCode \(claude\)   1\/5$/);
+  assert.match(primeiraLinha(params.choices[1].title), /OpenCode \(opencode\)   2\/5 - atual$/);
+  assert.match(primeiraLinha(params.choices[2].title), /Cursor \(cursor\)   3\/5 - contrato nao validado$/);
+  for (const [indice, escolha] of params.choices.entries()) {
+    assert.match(primeiraLinha(escolha.title), new RegExp(` ${indice + 1}/5`));
+  }
+  assert.equal(params.initial, 1);
+  assert.deepEqual(state.setToolCalls, []);
+  assert.match(textoSaida(state), /\[AVISO\] configuracao encerrada - o que foi aplicado antes desta etapa foi mantido/);
+});
+
+test('sem ferramenta registrada o cartao inicial e o primeiro', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'coluna',
+    escolhaCabecalho: 'painel',
+    escolhaFerramenta: undefined,
+  });
+  await runConfig(undefined, undefined, deps);
+  assert.equal(state.selectFerramentaParams[0].initial, 0);
+});
+
+test('confirmar a ferramenta grava no projeto corrente com [OK] nominal e encerra com 0 sem aviso', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'coluna',
+    escolhaCabecalho: 'painel',
+    escolhaFerramenta: 'claudecode',
+    projeto: 'meu-repo',
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.deepEqual(state.setToolCalls, [{ projeto: 'meu-repo', slug: 'claudecode' }]);
+  const saida = textoSaida(state);
+  assert.match(saida, /\[OK\]\s+ferramenta do projeto meu-repo definida como claudecode/);
+  assert.ok(!saida.includes('[AVISO]'), 'aviso de encerramento com fluxo completo');
+});
+
+test('confirmar slug de contrato nao validado nao grava e emite o aviso nominal do registry', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'coluna',
+    escolhaCabecalho: 'painel',
+    escolhaFerramenta: 'cursor',
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.deepEqual(state.setToolCalls, []);
+  assert.match(
+    textoSaida(state),
+    /\[AVISO\] contrato de execucao de Cursor ainda nao validado nesta versao\. Disponiveis: ClaudeCode, OpenCode/,
+  );
+});
+
+test('cancelar a terceira etapa mantem layout e cabecalho gravados e encerra com 0', async () => {
+  const { deps, state } = fazerDeps({
+    isTTY: true,
+    escolha: 'moldura',
+    escolhaCabecalho: 'compacto',
+    escolhaFerramenta: undefined,
+  });
+  const code = await runConfig(undefined, undefined, deps);
+  assert.equal(code, 0);
+  assert.deepEqual(state.setLayoutCalls, ['moldura']);
+  assert.deepEqual(state.setHeaderStyleCalls, ['compacto']);
+  assert.deepEqual(state.setToolCalls, []);
+  assert.match(textoSaida(state), /\[AVISO\] configuracao encerrada - o que foi aplicado antes desta etapa foi mantido/);
+});
+
+test('a largura da previa segue a porta colunas com piso 60 e teto 100', async () => {
+  const arquivo: FakeConfig = { version: 1, layout: 'coluna', cabecalho: 'regua', projetos: {} };
+
+  const largura = async (colunas?: number): Promise<number> => {
+    const { deps, state } = fazerDeps({ isTTY: true, escolha: undefined, colunas, arquivo: JSON.parse(JSON.stringify(arquivo)) });
+    await runConfig(undefined, undefined, deps);
+    return maiorLarguraVisivel(state.selectParams[0].choices.map((c) => c.title));
+  };
+
+  assert.equal(await largura(120), 100);
+  assert.equal(await largura(70), 70);
+  assert.equal(await largura(undefined), 80);
+});
+
+test('nenhuma linha de previa excede a largura informada, nos extremos de 60 e 100', async () => {
+  for (const colunas of [60, 100]) {
+    const { deps, state } = fazerDeps({
+      isTTY: true,
+      escolha: 'coluna',
+      escolhaCabecalho: undefined,
+      colunas,
+    });
+    await runConfig(undefined, undefined, deps);
+    for (const params of [state.selectParams[0], state.selectHeaderParams[0]]) {
+      const larguras = params.choices.flatMap((c) => c.title.split('\n').map(visibleWidth));
+      assert.ok(larguras.every((l) => l <= colunas), `linha acima de ${colunas}: ${Math.max(...larguras)}`);
+    }
+  }
+});
+
+test('o bloco vigente mantem sete linhas, rotulos e ordem, com alinhamento igual com e sem cor', async () => {
+  const esperados: Array<[string, string]> = [
+    ['Arquivo', '~'],
+    ['Layout', 'coluna'],
+    ['Cabecalho', 'painel'],
+    ['Projeto', 'projeto-x'],
+    ['Ferramenta', 'nao registrada'],
+  ];
+
+  const linhasDoBloco = async (forcarCor: boolean): Promise<string[]> => {
+    const anterior = process.env.FORCE_COLOR;
+    if (forcarCor) {
+      process.env.FORCE_COLOR = '3';
+    }
+    try {
+      const { deps, state } = fazerDeps({ projeto: 'projeto-x' });
+      await runConfig(undefined, undefined, deps);
+      return textoSaida(state).split('\n').slice(0, 7);
+    } finally {
+      if (anterior === undefined) {
+        delete process.env.FORCE_COLOR;
+      } else {
+        process.env.FORCE_COLOR = anterior;
+      }
+    }
+  };
+
+  const semCor = await linhasDoBloco(false);
+  const comCor = (await linhasDoBloco(true)).map((l) => l.replace(ANSI, ''));
+
+  for (const bloco of [semCor, comCor]) {
+    assert.match(bloco[0], /specifica-br\s+config/);
+    assert.equal(bloco[1], '');
+    for (const [i, [rotulo, valor]] of esperados.entries()) {
+      const linha = bloco[i + 2];
+      assert.ok(linha.startsWith(`  ${rotulo}`), `${rotulo} fora de posicao: ${linha}`);
+      assert.equal(linha.slice(15, 17), '  ', `${rotulo} sem a calha: ${linha}`);
+      assert.match(linha.slice(17), /^\S/, `${rotulo} desalinhado: ${linha}`);
+    }
+  }
 });

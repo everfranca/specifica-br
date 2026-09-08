@@ -302,6 +302,7 @@ Frequência de invocação: a CLI é chamada **no máximo duas vezes fora do loo
 | `--pack-model <modelo>` | `sonnet` | não vazio |
 | `--pack-effort <nivel>` | `low` | enum de esforço |
 | `--pack-max-tokens <n>` | `8000` | inteiro, ≥ 0 |
+| `--pack-timeout <segundos>` | `900` | inteiro, ≥ 0 (`0` desliga o teto) |
 | `--tasks <selecao>` | `''` | `/^[0-9,\-\s]+$/` |
 | `--allow <regra>` (repetível) | `[]` | entradas não vazias |
 | `--preflight` | `false` | — |

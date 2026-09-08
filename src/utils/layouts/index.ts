@@ -24,6 +24,7 @@ export type {
   LayoutRenderer,
   TaskStartInfo,
   TaskEndInfo,
+  EtapaInfo,
 } from './types.js';
 export type { EstadoDeEspera } from '../../types/executar-tasks.js';
 

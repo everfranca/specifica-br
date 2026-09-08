@@ -54,6 +54,13 @@ export type StatusKind = 'ok' | 'aviso' | 'erro' | 'info';
 export interface Painter {
   nivel: ColorLevel;
   petroleo(texto: string): string;
+  /**
+   * Petroleo com brilho escalado (0 a 1), para o rastro do indicador de
+   * execucao: 1 e a ponta, valores decrescentes apagam a celula. Em
+   * `LEVEL.NONE` devolve a entrada intacta — quem chama codifica o decaimento
+   * no glifo, nao na cor (RNF-003).
+   */
+  petroleoAjustado(texto: string, brilho: number): string;
   paprica(texto: string): string;
   ok(texto: string): string;
   aviso(texto: string): string;

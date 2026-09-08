@@ -24,6 +24,8 @@ import {
   DADOS_DE_EXEMPLO,
 } from '../dist/utils/layout-preview.js';
 import { renderCabecalho } from '../dist/utils/cabecalho/index.js';
+import { linhasDoBloco } from '../dist/utils/layouts/lote.js';
+import type { ItemLote } from '../dist/utils/layouts/lote.js';
 import type { HeaderStyle } from '../dist/types/config.js';
 import { createPainter, LEVEL, GLYPH, visibleWidth } from '../dist/utils/terminal/index.js';
 import type { GlyphLevel } from '../dist/utils/terminal/index.js';
@@ -721,4 +723,164 @@ test('as duas previas usam a mesma constante de dados de exemplo', () => {
     assert.ok(doEstilo.includes(valor), `previa de estilo sem ${valor}`);
     assert.ok(doLayout.includes(valor), `previa de layout sem ${valor}`);
   }
+});
+
+test('a previa do lote mostra o bloco real: barra de progresso e marcadores, nao a forma de coluna', () => {
+  const previa = buildPreview('lote', { ...BASE_PREVIA, cabecalho: 'painel' });
+  const cabecalho = buildHeaderPreview('painel', BASE_PREVIA);
+  const corpo = previa.slice(cabecalho.length).join('\n');
+
+  assert.match(corpo, /\[#+-+\] 2\/3/);
+  assert.ok(corpo.includes('+ task-1'), 'sem task concluida');
+  assert.ok(corpo.includes('x task-2'), 'sem task em erro');
+  assert.ok(corpo.includes('! task-3'), 'sem task pulada');
+  assert.ok(!corpo.includes('sonnet'), 'previa do lote saiu na forma de coluna');
+  assert.ok(!corpo.includes('ctx:'), 'previa do lote saiu na forma de coluna');
+});
+
+test('nenhuma linha de nenhuma previa contem byte de escape, em todos os layouts e niveis de glifo', () => {
+  for (const nome of NOMES_DE_LAYOUT) {
+    for (const glyphLevel of [GLYPH.ASCII, GLYPH.UNICODE_BOX, GLYPH.UNICODE_FULL]) {
+      const previa = buildPreview(nome, {
+        painter: painterNone,
+        glyphLevel,
+        largura: 72,
+        cabecalho: 'painel',
+      });
+      assert.ok(
+        previa.every((linha) => !linha.includes('\x1b')),
+        `${nome}/${glyphLevel} com escape`,
+      );
+    }
+  }
+});
+
+test('a previa do lote com cor nao contem nenhuma sequencia de cursor', () => {
+  const previa = buildPreview('lote', {
+    painter: painterCor,
+    glyphLevel: GLYPH.UNICODE_FULL,
+    largura: 72,
+    cabecalho: 'regua',
+  });
+  const corpo = previa.join('');
+  assert.ok(!/\x1b\[\?25/.test(corpo), 'ocultou o cursor na previa');
+  assert.ok(!/\x1b\[\d+A/.test(corpo), 'moveu o cursor na previa');
+  assert.ok(!/\x1b\[2K/.test(corpo), 'limpou linha na previa');
+  assert.ok(!corpo.includes('\r'), 'retorno de carro na previa');
+});
+
+test('linhasDoBloco e pura: task ativa usa o quadro e o instante recebidos', () => {
+  const itens: ItemLote[] = [
+    { numero: 1, arquivo: 'task-1.md', estado: 'ativa', inicioMs: 0 },
+  ];
+  const linhas = linhasDoBloco(
+    itens,
+    1,
+    '=',
+    { painter: painterNone, largura: 100 },
+    65000,
+  );
+  assert.equal(linhas[0], `[${'-'.repeat(40)}] 0/1`);
+  assert.equal(linhas[1], '= task-1 1m 05s');
+});
+
+test('linhasDoBloco acima de quinze itens exibe a janela das ativas e o contador das concluidas', () => {
+  const itens: ItemLote[] = Array.from({ length: 18 }, (_, i) => ({
+    numero: i + 1,
+    arquivo: `task-${i + 1}.md`,
+    estado: i < 3 ? ('ok' as const) : ('ativa' as const),
+    inicioMs: 0,
+  }));
+  const linhas = linhasDoBloco(
+    itens,
+    18,
+    '=',
+    { painter: painterNone, largura: 100 },
+    0,
+  );
+  assert.ok(linhas[0].endsWith('] 3/18'));
+  assert.equal(linhas.length, 17);
+  assert.equal(linhas[16], 'concluidas: 3/18');
+  for (const linha of linhas.slice(1, 16)) {
+    assert.ok(linha.startsWith('= task-'), linha);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Etapa longa fora de task (RF-029): o par `etapaStart`/`etapaEnd`.
+// ---------------------------------------------------------------------------
+
+const ETAPA = {
+  rotulo: 'Construindo o Contexto de Execucao',
+  model: 'opus',
+  effort: 'high',
+};
+
+test('as quatro estrategias anunciam a etapa longa com rotulo, modelo e esforco', () => {
+  for (const nome of NOMES_DE_LAYOUT) {
+    const { contexto, stream } = fazerCtx({ isTTY: false });
+    const layout = createLayout(nome, contexto);
+    layout.etapaStart(ETAPA);
+    layout.etapaEnd('ok', 'Contexto de Execucao construido em opus - 12.400 bytes - 2m 3s');
+    layout.dispose();
+
+    const juntas = semAnsi(stream.writes.join(''));
+    assert.ok(juntas.includes('Construindo o Contexto de Execucao'), `${nome}: sem rotulo`);
+    assert.ok(juntas.includes('opus/high'), `${nome}: sem modelo/esforco`);
+    assert.ok(
+      juntas.includes('pode levar alguns minutos'),
+      `${nome}: sem o aviso de que a espera e esperada`
+    );
+    assert.ok(juntas.includes('12.400 bytes'), `${nome}: sem a linha final`);
+  }
+});
+
+test('fora de TTY a etapa longa produz exatamente duas linhas, sem reescrita', () => {
+  for (const nome of NOMES_DE_LAYOUT) {
+    const { contexto, stream } = fazerCtx({ isTTY: false });
+    const layout = createLayout(nome, contexto);
+    layout.etapaStart(ETAPA);
+    layout.etapaEnd('ok', 'pronto');
+    layout.dispose();
+
+    const juntas = stream.writes.join('');
+    assert.equal(juntas.split('\n').filter((l) => l !== '').length, 2, `${nome}: linhas`);
+    assert.ok(!juntas.includes('\r'), `${nome}: houve reescrita fora de TTY`);
+    assert.ok(!juntas.includes('\x1b[2K'), `${nome}: limpou linha fora de TTY`);
+  }
+});
+
+test('em TTY a etapa longa liga o indicador e a linha final o substitui na mesma linha', () => {
+  for (const nome of NOMES_DE_LAYOUT) {
+    const { contexto, stream } = fazerCtx({ isTTY: true });
+    const layout = createLayout(nome, contexto);
+    layout.etapaStart(ETAPA);
+    const durante = stream.writes.join('');
+    assert.ok(
+      durante.includes('Construindo o Contexto de Execucao'),
+      `${nome}: nada foi escrito ao comecar a etapa`
+    );
+
+    layout.etapaEnd('ok', 'pronto');
+    const juntas = stream.writes.join('');
+    assert.ok(juntas.includes('\r\x1b[2K'), `${nome}: nao substituiu na mesma linha`);
+    assert.ok(semAnsi(juntas).includes('pronto'), `${nome}: sem a linha final`);
+    layout.dispose();
+    assert.ok(
+      stream.writes.join('').includes('\x1b[?25h'),
+      `${nome}: cursor nao restaurado`
+    );
+  }
+});
+
+test('etapaEnd sem indicador ativo ainda escreve a linha final', () => {
+  const { contexto, stream } = fazerCtx({ isTTY: true });
+  const layout = createLayout('coluna', contexto);
+  layout.etapaStart(ETAPA);
+  // Uma mensagem intermediaria (aviso de teto, divergencia de modelo) encerra o
+  // indicador antes do desfecho: a linha final nao pode se perder por isso.
+  layout.message('aviso', 'contexto acima do teto');
+  layout.etapaEnd('ok', 'pronto');
+  layout.dispose();
+  assert.ok(semAnsi(stream.writes.join('')).includes('pronto'));
 });
