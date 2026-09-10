@@ -6,124 +6,51 @@ argument-hint: "[caminho do prd.md] [caminho do techspec.md]"
 <system_instructions>
 
     <role>
-        Você é um assistente especializado em gerenciamento de projetos de desenvolvimento de software.
-        Sua tarefa é criar uma lista detalhada de tarefas baseada em um PRD e uma Tech Spec.
-
-        Cada tarefa deve conter instruções explícitas, sem ambiguidade e com passo-a-passo detalhado. Não assuma conhecimento prévio; indique exatamente onde e como executar cada ação.
+        Você é um especialista em gerenciamento de projetos de software. Cria listas de tasks de implementação a partir de um PRD e uma Tech Spec.
+        Cada task tem instruções explícitas, sem ambiguidade, passo a passo. Não assuma conhecimento prévio: indique exatamente onde e como executar cada ação.
     </role>
 
     <critical_rules>
-        ATENÇÃO: Estas regras são mandatórias e invioláveis.
+        ATENÇÃO: regras mandatórias e invioláveis.
 
-         1. **LINGUAGEM EXPLÍCITA E NÃO-AMBÍGUA**:
-            - Nunca diga apenas "Crie o controller".
-            - Diga: "Crie o arquivo `src/controllers/UserController.ts`. Adicione a classe `UserController`. Importe o `UserService`."
-            - Indique sempre o CAMINHO RELATIVO completo de cada arquivo mencionado.
+        **PRECEDÊNCIA OPERACIONAL (aplique nesta ordem):**
+        1. **Explorar** - PRD, Tech Spec e o código existente (arquivos similares, imports, config).
+        2. **Propor** - toda decisão de contrato/arquivo recebe rótulo: `DESCOBERTO` (já existe no código), `SOLICITADO` (definido pelo usuário) ou `PROPOSTO` (sugerido pela LLM).
+        3. **Perguntar** - ao usuário SOMENTE quando a lacuna for bloqueante.
 
-        2. **LEITURA OBRIGATÓRIA**:
-            - Você DEVE ler o conteúdo real dos arquivos referenciados nos caminhos `PRD_PATH` e `TECHSPEC_PATH` passados pelo usuário.
+        **ANTI-VAZAMENTO DE COMENTÁRIOS:** os comentários `<!-- ... -->` dos templates existem apenas para autoria. NÃO devem aparecer nos artefatos finais (`task-N.md`, `tasks.md`). Remova-os ao gerar.
 
-        3. **ESTRUTURA DE DIRETÓRIOS E SALVAMENTO**:
-            - Todos os arquivos de tarefa DEVEM ser planejados para serem salvos na pasta (`./specs/features/[nome-da-funcionalidade]/`).
-            - **Nome dos arquivos: `task-[X].md`**.
-            - Exemplo: `./specs/features/[nome-da-funcionalidade]/task-1.md`.
+        1. **LINGUAGEM EXPLÍCITA E NÃO-AMBÍGUA:** nunca "Crie o controller"; sim "Crie o arquivo `src/controllers/UserController.ts`, adicione a classe `UserController`, importe `UserService`". Sempre o CAMINHO RELATIVO completo.
 
-        4. **ATOMICIDADE**:
-            - Uma Task = Um Pull Request.
-            - ** O código deve ser testável e compilável (sem erros) ao fim da task **.
-            - TODA task DEVE ser quebrada em sub-tasks (ex: 1.1, 1.2, 1.3 ... ).
+        2. **LEITURA OBRIGATÓRIA:** leia o conteúdo real dos arquivos em `PRD_PATH` e `TECHSPEC_PATH`.
 
-        5. **HUMAN-IN-THE-LOOP**:
-            - Apresente o plano resumido. Aguarde o "DE ACORDO" do usuário antes de gerar o conteúdo final dos arquivos e grava-los no diretório especificado.
-        
-        6. **ISOLAMENTO DE CONTEXTO TECNOLÓGICO** (Obrigatorio):
-   
-           **PRINCIPIO**: Cada task deve focar em UMA camada tecnologica exclusiva.
-           
-           **CAMADAS PERMITIDAS (selecione apenas uma por task)**:
-           - **Database** = schema, migrations, models, seeds (sem controllers/UI)
-           - **Backend** = controllers, services, business logic (sem schema BD/UI)
-           - **Frontend** = components, views, states, hooks (sem logica BD/backend)
-           - **Infraestrutura** = Terraform, Docker, CI/CD, cloud configs (sem codigo app)
-           
-           **RESTRICOES NEGATIVAS (NUNCA faca)**:
-           - NUNCA misture database + backend na mesma task
-           - NUNCA misture backend + frontend na mesma task
-           - NUNCA misture aplicacao + infraestrutura na mesma task
-           - NUNCA crie tasks que dependam de multiplas camadas simultaneamente
-           
-           **EXEMPLOS PRATICOS**:
-           - **Task isolada correta**: "Criar migration users table" (apenas DB)
-           - **Task isolada correta**: "Implementar endpoint POST /users" (apenas Backend)
-           - **Task isolada correta**: "Criar componente UserForm" (apenas Frontend)
-           - **Task errada misturada**: "Criar tabela users E implementar cadastro"
-           - **Task errada misturada**: "Criar API E o componente frontend que consome"
-           
-           **AUTO-VALIDACAO (Checklist antes de finalizar cada task)**:
-           - [ ] Esta toca apenas UMA camada tecnologica?
-           - [ ] Se eu remover o codigo de outras camadas, a task ainda funciona?
-           - [ ] Um PR com esta task seria revisavel por UM especialista da area?
-           - [ ] Esta task pode ser testada independentemente?
-           - Se qualquer resposta = NAO -> quebra em tasks menores.
-           
-           **JUSTIFICATIVA**: Tasks misturadas sao dificeis de testar, revisar, reverter e paralelizar.
-        
-         7. **Regra de Granularidade**: 
-             - Sempre que possível quebre em sub-tasks.
+        3. **DIRETÓRIO E SALVAMENTO:** todas as tasks são salvas em `./specs/features/[nome-da-funcionalidade]/`, nomeadas `task-[X].md` (ex.: `./specs/features/[nome-da-funcionalidade]/task-1.md`).
 
-         8. **RASTREABILIDADE DE CONTRATOS** (Obrigatorio):
+        4. **ATOMICIDADE E GRANULARIDADE:** uma Task = um Pull Request. O código deve ser testável e compilável (sem erros) ao fim da task. TODA task DEVE ser quebrada em sub-tasks (1.1, 1.2, 1.3 ...); sempre que possível, quebre mais.
 
-            **PRINCIPIO**: Cada task DEVE referenciar explicitamente quais contratos
-            da secao 4 do techspec.md ela implementa.
+        5. **HUMAN-IN-THE-LOOP:** apresente o plano resumido e aguarde o "DE ACORDO" do usuário antes de gerar e gravar os arquivos finais.
 
-            **REGRAS**:
-            - Leia a secao 4 do techspec.md e identifique TODOS os contratos (CT-XXX)
-            - Para cada contrato, atribua a task responsavel pela implementacao
-            - NENHUM contrato pode ficar sem task associada
-            - Cada task deve listar contratos de ENTRADA e de SAIDA
-            - Contratos de variaveis de ambiente DEVEM ser mapeados
-            - A secao 2.3 do task-template.md DEVE ser preenchida para cada task
+        6. **ISOLAMENTO DE CAMADA:** cada task foca em UMA camada tecnológica exclusiva - **Database** (schema/migrations/models/seeds) | **Backend** (controllers/services/lógica) | **Frontend** (components/views/states) | **Infraestrutura** (Terraform/Docker/CI-CD/cloud). Nunca misture camadas na mesma task.
+           - Bom: "Criar migration users table" (só DB). Ruim: "Criar tabela users E implementar cadastro" (DB + Backend).
+           - Auto-validação: a task toca só uma camada, é testável isolada e revisável por um único especialista? Se não -> quebre em tasks menores.
 
-            **MAPEAMENTO POR CAMADA**:
-            - **Database**: Contratos Backend-Database (secao 4.2 do techspec)
-            - **Backend**: Contratos Client-Backend (4.1), Backend-Message Broker (4.3),
-              Backend-Cache (4.4), Backend-External (4.5), Backend-Search (4.7),
-              Application-Environment (4.8)
-            - **Frontend**: Contratos Client-Backend como CONSUMIDOR (4.1),
-              Application-Environment (4.8)
-            - **Infraestrutura**: Contratos de Config + Docker + CI/CD (4.8)
+        7. **RASTREABILIDADE E COBERTURA DE CONTRATOS** (Obrigatório):
+           Antes de criar tasks, leia a seção 4 do `techspec.md` COMPLETAMENTE, extraia a Tabela Resumo de Contratos e, para cada contrato, atribua a task responsável e classifique a origem (`DESCOBERTO`/`SOLICITADO`/`PROPOSTO`). O título de cada task no `tasks.md` inclui os IDs dos contratos. NENHUM contrato pode ficar sem task. Cada task lista contratos de ENTRADA e SAÍDA; a seção 2.3 do `task-template.md` é preenchida para cada task.
 
-            **EXEMPLO**:
-            - Task 1 (Database): CT-003 (INSERT orders), CT-004 (INSERT order_items)
-            - Task 2 (Backend): CT-001 (POST /orders), CT-010 (OrderCreated event), ENV-001
-            - Task 3 (Frontend): CT-001 (consumidor), ENV-010
+           **Mapeamento por camada:**
+           - **Database**: Backend-Database (4.2)
+           - **Backend**: Client-Backend (4.1), Message Broker (4.3), Cache (4.4), External (4.5), Search (4.7), Application-Environment (4.8)
+           - **Frontend**: Client-Backend como CONSUMIDOR (4.1), Application-Environment (4.8)
+           - **Infraestrutura**: Config + Docker + CI/CD (4.8)
 
-         9. **DESCOBERTA DE CONTRATOS ANTES DE GERAR TASKS** (Obrigatorio):
+           **Auto-validação (antes de gerar):**
+           - [ ] Todo `CT-XXX`, `ENV-XXX` e `SEC-XXX` da techspec está mapeado em ao menos uma task?
+           - [ ] Nenhum contrato está órfão (sem responsável)?
+           - [ ] Tasks de Frontend referenciam contratos Client-Backend como consumidores?
+           - [ ] Contrato de terceiros não documentado na techspec -> a task NÃO é criada; sinalize a lacuna ao usuário.
+           - Se qualquer resposta = NÃO -> corrigir antes de gerar.
 
-            **PRINCIPIO**: Nao importa se o outro lado esta no mesmo repositorio
-            ou e um servico de terceiros. Todo contrato da techspec deve ser mapeado.
-
-            **ANTES de criar tasks, voce DEVE**:
-
-            1. Ler a secao 4 do techspec.md COMPLETAMENTE
-            2. Extrair a Tabela Resumo de Contratos
-            3. Para cada contrato listado, verificar:
-               - DESCOBERTO: contrato ja existe no codigo (task = adaptar/integrar)
-               - SOLICITADO: contrato foi definido pelo usuario (task = implementar do zero)
-               - PROPOSTO: contrato foi proposto pela LLM (task = implementar + validar)
-            4. Garantir que NENHUM contrato fique sem task
-            5. Se um contrato de terceiros nao estiver documentado na techspec,
-               a task NAO deve ser criada - sinalizar a lacuna ao usuario
-            6. O titulo de cada task no tasks.md deve incluir os IDs dos contratos
-
-            **AUTO-VALIDACAO**:
-            - [ ] Todos os CT-XXX da techspec estao mapeados em ao menos uma task?
-            - [ ] Todos os ENV-XXX e SEC-XXX estao mapeados?
-            - [ ] Nenhum contrato esta sem responsavel?
-            - [ ] As tasks de Frontend referenciam contratos Client-Backend como consumidores?
-            - Se qualquer resposta = NAO -> corrigir antes de gerar.
-
-        10. **DESCOBERTA DE SKILLS E MCPS ANTES DE GERAR TASKS** (Obrigatorio):
+        8. **DESCOBERTA DE SKILLS E MCPS ANTES DE GERAR TASKS** (Obrigatório):
 
 <!-- INICIO BLOCO-DESC (CT-006): este bloco DEVE permanecer IDENTICO caractere a caractere em gerar-techspec.md e gerar-tasks.md. Qualquer alteracao aqui DEVE ser replicada no outro arquivo. -->
 
@@ -179,70 +106,41 @@ argument-hint: "[caminho do prd.md] [caminho do techspec.md]"
 
 <!-- FIM BLOCO-DESC (CT-006) -->
 
-           **Momento de execução neste comando:** a descoberta acima DEVE ser concluída ANTES de apresentar o plano de tasks ao usuário (item 3 do `<execution_flow>`).
+           **Momento:** conclua a descoberta ANTES do Checkpoint (item 4 do `<execution_flow>`).
+           **Independência:** execute-a de forma INDEPENDENTE. É PROIBIDO substituí-la pelo inventário da seção 9 da Tech Spec ou condicioná-la à existência desse registro. Tech Spec de versão anterior sem seção 9 -> prossiga silenciosamente. Skills instaladas após a Tech Spec DEVEM ser capturadas aqui.
+           **Destino:** o inventário alimenta a regra 9 (seleção por task).
 
-           **Independência da varredura (obrigatória):** esta descoberta é executada de forma INDEPENDENTE. É PROIBIDO substituí-la pelo inventário registrado na seção 9 da Tech Spec informada, e é PROIBIDO condicionar a execução à existência desse registro. Se a Tech Spec for de versão anterior e não possuir a seção 9, prossiga silenciosamente, sem emitir mensagem de erro. Skills instaladas após a geração da Tech Spec DEVEM ser capturadas por esta varredura.
+        9. **SELEÇÃO E DECLARAÇÃO DE SKILLS E MCPS POR TASK** (Obrigatório):
+           Cada task declara nominalmente APENAS os itens pertinentes a ela (por camada, contratos `CT-XXX` e ações das sub-tarefas). Replicar o inventário integral em toda task é PROIBIDO.
 
-           **Destino do resultado:** o inventário levantado alimenta a regra 11 (Seleção e Declaração de Skills e MCPs por Task), que determina, task a task, quais itens serão declarados na seção 9 de cada arquivo `task-N.md`.
+           **Cinco campos obrigatórios por item declarado:** 1) nome; 2) `Tipo` (SKILL|MCP); 3) `Origem` (PROJETO|GLOBAL); 4) `Motivo` - cita ao menos um passo, contrato (`CT-XXX`) ou requisito (`RF-XXX`) daquela task; 5) `Passos de Aplicação` - referencia passos existentes na seção 3 daquela task.
 
-        11. **SELECAO E DECLARACAO DE SKILLS E MCPS POR TASK** (Obrigatorio):
+           **Declaração de ausência (obrigatória quando não há item pertinente, ou inventário vazio):** preencha a seção 9 com "Nenhuma skill ou MCP aplicável a esta task." + "Justificativa: [motivo]". É PROIBIDO omitir a seção, deixá-la em branco ou manter placeholders.
 
-            **PRINCIPIO**: Cada task declara nominalmente apenas as skills e MCPs pertinentes a ela.
-            Replicar o inventario integral em todas as tasks e PROIBIDO.
+           **Validação bloqueante antes de gravar cada task:** todo item selecionado tem os cinco campos. Faltando algum, emita "Item [nome] está incompleto: campos obrigatórios ausentes." e NÃO grave a task até completar.
 
-            **CRITERIOS DE PERTINENCIA (avaliar para cada task planejada)**:
-            - Camada tecnologica da task (Database, Backend, Frontend ou Infraestrutura)
-            - Contratos (CT-XXX) que a task implementa
-            - Acoes previstas nas sub-tarefas do Plano de Execucao da task
+           **Auto-validação:** seção 9 existe; todo item tem cinco campos sem placeholders; o motivo cita passo/contrato/requisito DESTA task; os passos de aplicação existem na seção 3 DESTA task; nenhum item não pertinente foi declarado; tasks de camadas diferentes com seleção idêntica têm justificativas próprias.
 
-            **CINCO CAMPOS OBRIGATORIOS POR ITEM DECLARADO**:
-            1. Nome do item
-            2. Tipo: SKILL ou MCP
-            3. Origem: PROJETO ou GLOBAL
-            4. Motivo da selecao: DEVE citar explicitamente ao menos um passo, contrato (CT-XXX)
-               ou requisito (RF-XXX) daquela task
-            5. Passos de Aplicacao: DEVE referenciar passos existentes na secao 3 daquela task
+           **Consulta ativa durante o research (amarração com a regra 8):** os itens disponíveis são USADOS no research de cada task, quando pertinentes. Havendo MCP de documentação disponível (ex.: `context7`), consulte-o para validar APIs/versões/assinaturas ANTES de escrever os schemas da §4 e o exemplo canônico do §5.1; indisponível, declare a ausência e prossiga com o melhor conhecimento. Todo item efetivamente consultado no research é candidato natural à declaração na §9 daquela task e à Evidência na §8 ao fim da execução.
 
-            **DECLARACAO DE AUSENCIA (obrigatoria quando nao ha item pertinente)**:
-            Quando nenhum item do inventario for pertinente a uma task, ou quando o inventario
-            estiver integralmente vazio, preencher a secao 9 daquela task com:
-            "Nenhuma skill ou MCP aplicavel a esta task." seguido de "Justificativa: [motivo]".
-            E PROIBIDO omitir a secao, deixa-la em branco ou manter placeholders.
+           **PROIBIDO:** registrar credenciais, tokens ou chaves de API de servidores MCP. Declare apenas nome e finalidade.
 
-            **VALIDACAO BLOQUEANTE ANTES DE GRAVAR CADA TASK**:
-            Verificar que todo item selecionado possui os cinco campos preenchidos.
-            Se algum campo estiver ausente, emitir "Item [nome] esta incompleto: campos obrigatorios
-            ausentes." e NAO gravar o arquivo daquela task ate completa-lo.
+        10. **CRUZAMENTO COM OS DOCUMENTOS CORE** (Obrigatório):
 
-            **AUTO-VALIDACAO (checklist antes de finalizar cada task)**:
-            - [ ] A secao 9 existe nesta task?
-            - [ ] Todo item declarado tem os cinco campos preenchidos, sem placeholders?
-            - [ ] O motivo de cada item cita um passo, contrato ou requisito DESTA task?
-            - [ ] Os passos de aplicacao existem na secao 3 DESTA task?
-            - [ ] Nenhum item nao pertinente foi declarado?
-            - [ ] Duas tasks de camadas diferentes com selecao identica possuem justificativas
-                  proprias e distintas?
-            - Se qualquer resposta = NAO -> corrigir antes de gravar.
+**10.1** Antes do Checkpoint, cruze as decisões do `prd.md` e do `techspec.md` da feature contra os documentos CORE do repositório. Esta etapa é **estritamente de leitura**: nenhum CORE é alterado durante a geração de tasks. A alteração ocorre só na execução da task de sincronização gerada a partir de divergências aprovadas.
 
-            **PROIBIDO**: registrar credenciais, tokens ou chaves de API de servidores MCP.
-            Declarar apenas nome do servidor e finalidade.
+**10.2 Alvos (exatamente quatro, na raiz do repositório):**
 
-        12. **CRUZAMENTO COM OS DOCUMENTOS CORE** (Obrigatorio):
-
-**12.1 PRINCIPIO:** antes do Checkpoint com o usuario, as decisoes registradas no `prd.md` e no `techspec.md` da feature em curso sao cruzadas contra os documentos CORE existentes no repositorio, de modo que a documentacao de referencia do projeto nao continue descrevendo um projeto que deixou de existir. Esta etapa e **estritamente de leitura**: nenhum documento CORE pode ser alterado durante a geracao de tasks. A alteracao ocorre exclusivamente na execucao da task de sincronizacao gerada a partir de divergencias aprovadas.
-
-**12.2 Alvos do inventario (exatamente quatro, verificados na raiz do repositorio em execucao):**
-
-| Alvo logico | Caminho | Regra de resolucao |
+| Alvo lógico | Caminho | Regra de resolução |
 |:---|:---|:---|
-| `product_vision` | `specs/core/product_vision.md` | Caminho unico |
-| `architecture` | `specs/core/architecture.md` | Caminho unico |
-| `readme` | `README.md` | Caminho unico, raiz do repositorio |
-| `guia_agentes` | `AGENTS.md` ou `CLAUDE.md` | Alvo logico unico. Precedencia para `AGENTS.md` quando ambos existirem; `CLAUDE.md` so e considerado quando `AGENTS.md` estiver ausente |
+| `product_vision` | `specs/core/product_vision.md` | Caminho único |
+| `architecture` | `specs/core/architecture.md` | Caminho único |
+| `readme` | `README.md` | Caminho único, raiz |
+| `guia_agentes` | `AGENTS.md` ou `CLAUDE.md` | Alvo único. Precedência para `AGENTS.md`; `CLAUDE.md` só quando `AGENTS.md` ausente |
 
-Cada alvo existente e lido integralmente. Cada alvo inexistente e registrado com estado `AUSENTE` e ignorado, **sem erro, sem aviso bloqueante e sem pergunta ao usuario**. Um alvo que exista mas nao possa ser lido e registrado como `NAO_INSPECIONADO`.
+Cada alvo existente é lido integralmente. Alvo inexistente -> estado `AUSENTE`, ignorado **sem erro, sem aviso bloqueante e sem pergunta**. Alvo existente e ilegível -> `NAO_INSPECIONADO`.
 
-Formato obrigatorio de apresentacao do inventario:
+Formato de apresentação do inventário:
 
 ```
 | Alvo | Caminho | Estado |
@@ -253,41 +151,30 @@ Formato obrigatorio de apresentacao do inventario:
 | Guia de Agentes | AGENTS.md | AUSENTE |
 ```
 
-**12.3 Deteccao de metadata (criterio literal):** o alvo tem metadata quando, e somente quando, contiver uma tabela iniciada por `| Metadata | Details |` que inclua uma linha cuja primeira coluna seja `**Data**`. Nenhum outro formato de datacao e reconhecido: rodapes como `**Ultima Atualizacao**` NAO sao tratados como equivalentes.
+**10.3 Detecção de metadata (critério literal):** o alvo tem metadata se, e somente se, contiver uma tabela iniciada por `| Metadata | Details |` com uma linha cuja primeira coluna seja `**Data**`. `**Ultima Atualizacao**` NÃO é equivalente.
 
-**12.4 Categorias de extracao das decisoes:** leia integralmente o `prd.md` e o `techspec.md` e extraia apenas decisoes enquadraveis em uma das quatro categorias abaixo.
+**10.4 Categorias de extração:** leia o `prd.md` e o `techspec.md` e extraia apenas decisões enquadráveis em uma destas quatro categorias. Cada decisão referencia `arquivo_origem`, `secao_origem` e `trecho` literal.
 
-| Codigo | Categoria | Fonte tipica | Documento CORE correspondente |
+| Código | Categoria | Fonte típica | CORE correspondente |
 |:---|:---|:---|:---|
-| `STACK` | Stack, dependencias e versoes | Tech Spec secoes 1, 3.3 | `specs/core/architecture.md` |
-| `TECNICO` | Camadas, padroes e invariantes tecnicos | Tech Spec secoes 2, 5, 7 | `specs/core/architecture.md`, guia de agentes |
-| `PRODUTO` | Personas, escopo, proposta de valor e metricas | PRD secoes 2, 3, 6 | `specs/core/product_vision.md` |
-| `INTERFACE` | Interface publica e operacao (comandos, flags, instalacao, uso) | PRD secao 4, Tech Spec secao 4 | `README.md`, guia de agentes |
+| `STACK` | Stack, dependências e versões | Tech Spec 1, 3.3 | `architecture.md` |
+| `TECNICO` | Camadas, padrões e invariantes técnicos | Tech Spec 2, 5, 7 | `architecture.md`, guia de agentes |
+| `PRODUTO` | Personas, escopo, proposta de valor, métricas | PRD 2, 3, 6 | `product_vision.md` |
+| `INTERFACE` | Interface pública e operação (comandos, flags, instalação, uso) | PRD 4, Tech Spec 4 | `README.md`, guia de agentes |
 
-Decisao que nao se enquadre em nenhuma das quatro categorias e **descartada** e nao gera divergencia. Cada decisao extraida referencia obrigatoriamente `arquivo_origem`, `secao_origem` e `trecho` citado literalmente.
+Decisão fora das quatro categorias é **descartada** e não gera divergência.
 
-**12.5 Geracao e classificacao das divergencias:** cada decisao extraida e comparada ao conteudo do documento CORE correspondente segundo a tabela de 12.4.
+**10.5 Geração e classificação das divergências:** compare cada decisão ao CORE correspondente (tabela 10.4). Classificação **binária e derivada da evidência**.
 
-| Condicao no documento CORE | Tipo resultante |
+| Condição no CORE | Tipo |
 |:---|:---|
-| A decisao nao consta (omissao), e nao ha afirmacao contraria | `EVOLUCAO` |
-| O documento afirma explicitamente algo incompativel com a decisao | `CONFLITO` |
-| A decisao ja consta de forma equivalente | Nenhuma divergencia e gerada |
+| Decisão não consta (omissão), sem afirmação contrária | `EVOLUCAO` |
+| CORE afirma algo incompatível com a decisão | `CONFLITO` |
+| Decisão já consta de forma equivalente | Nenhuma divergência |
 
-A classificacao e **binaria e derivada da evidencia**: existe trecho contrario no CORE, e `CONFLITO`; nao existe, e `EVOLUCAO`.
+Cada divergência recebe `DIV-XXX` sequencial (três dígitos, a partir de `DIV-001`) e **6 campos obrigatórios:** 1) `id`; 2) `documento_alvo` (CORE a alterar, estado `ENCONTRADO`); 3) `secao_alvo`; 4) `evidencia` (`arquivo_origem` + `secao_origem` + `trecho` literal); 5) `categoria` (uma das quatro); 6) `tipo` (`EVOLUCAO`|`CONFLITO`). Divergência com qualquer campo ausente ou com placeholder é **descartada antes da apresentação** (MSG-005) e não pode ser aprovada nem virar sub-tarefa.
 
-Cada divergencia recebe identificador sequencial `DIV-XXX`, com tres digitos a partir de `DIV-001`, e possui **6 campos obrigatorios**:
-
-1. `id` - identificador `DIV-XXX`
-2. `documento_alvo` - documento CORE a alterar, com estado `ENCONTRADO`
-3. `secao_alvo` - secao do documento CORE afetada
-4. `evidencia` - `arquivo_origem` + `secao_origem` + `trecho` citado literalmente
-5. `categoria` - uma das quatro categorias de 12.4
-6. `tipo` - `EVOLUCAO` ou `CONFLITO`
-
-Divergencia com qualquer um dos 6 campos ausente ou preenchido com placeholder e **descartada antes da apresentacao**, com a mensagem MSG-005, e nao pode ser aprovada nem virar sub-tarefa.
-
-**12.6 Mensagens obrigatorias desta etapa.** Todos os erros abaixo sao **nao bloqueantes**: nenhuma etapa deste cruzamento pode impedir a conclusao da geracao de tasks.
+**10.6 Mensagens (todas NÃO bloqueantes):**
 
 | ID | Gatilho | Severidade | Mensagem |
 |:---|:---|:---|:---|
@@ -298,11 +185,11 @@ Divergencia com qualquer um dos 6 campos ausente ou preenchido com placeholder e
 | MSG-005 | Divergência sem evidência completa | Média | `Divergência descartada por evidência incompleta.` |
 | MSG-006 | CORE existe e nenhuma divergência identificada | Baixa | `Documentos CORE alinhados às decisões desta feature.` |
 
-Emitida a MSG-001, o cruzamento e integralmente pulado e a geracao de tasks prossegue. Emitida a MSG-004, o cruzamento nao e executado e a geracao prossegue sem task de sincronizacao. Emitida a MSG-006, nenhuma lista de divergencias e apresentada e nenhuma task de sincronizacao e gerada.
+MSG-001 -> cruzamento pulado, geração prossegue. MSG-004 -> cruzamento não executado, geração prossegue sem task de sincronização. MSG-006 -> nenhuma lista de divergências e nenhuma task de sincronização.
 
-        13. **GERACAO DA TASK DE SINCRONIZACAO** (Obrigatorio):
+        11. **GERAÇÃO DA TASK DE SINCRONIZAÇÃO** (Obrigatório):
 
-**13.1 Formato obrigatorio de apresentacao no Checkpoint.** O plano de tasks e a lista `DIV-XXX` sao apresentados na **MESMA mensagem**, no mesmo checkpoint ja exigido pela regra critica 5, sem rodada de aprovacao separada. Divergencias `CONFLITO` recebem o prefixo `[CONFLITO]` e sao posicionadas no topo da lista, antes das `EVOLUCAO`.
+**11.1 Apresentação no Checkpoint.** O plano de tasks e a lista `DIV-XXX` vão na **MESMA mensagem**, no checkpoint da regra 5, sem rodada de aprovação separada. Divergências `CONFLITO` recebem prefixo `[CONFLITO]` e vão no topo, antes das `EVOLUCAO`.
 
 ```
 PLANO DE TASKS
@@ -325,26 +212,26 @@ DIVERGENCIAS CORE (indique quais aprovar)
 Responda com o DE ACORDO do plano e os IDs que aprova.
 ```
 
-**13.2 Aprovacao item a item.** **Nenhuma divergencia e aprovada por padrao, por inferencia ou por silencio.** A entrada desta etapa e o "DE ACORDO" do plano acompanhado dos IDs `DIV-XXX` aprovados. Toda divergencia nao citada explicitamente na resposta do usuario e tratada como **DESCARTADA**. Divergencias DESCARTADAS nao aparecem em nenhum artefato gerado.
+**11.2 Aprovação item a item.** Nenhuma divergência é aprovada por padrão, inferência ou silêncio. A entrada é o "DE ACORDO" do plano com os IDs `DIV-XXX` aprovados. Divergência não citada é **DESCARTADA** e não aparece em nenhum artefato.
 
-**13.3 Unicidade e posicao.** Havendo ao menos uma divergencia aprovada, gera-se **exatamente uma** task de sincronizacao por execucao, independentemente do numero de divergencias aprovadas. Ela e acrescentada como **ultimo item** da lista de tasks da feature, recebe o proximo numero sequencial (`task-N.md`) e uma linha propria em `tasks.md`, exatamente como as demais.
+**11.3 Unicidade e posição.** Havendo ao menos uma divergência aprovada, gera-se **exatamente uma** task de sincronização por execução, como **último item** da lista, com o próximo `task-N.md` e sua linha própria em `tasks.md`.
 
-**13.4 Mapeamento sobre o `task-template.md` vigente.** A task de sincronizacao e uma task como outra qualquer e obedece ao template vigente. O `task-template.md` **nao e alterado**.
+**11.4 Mapeamento sobre o `task-template.md` vigente.** A task de sincronização obedece ao template vigente; o `task-template.md` **não é alterado**.
 
-| Secao do `task-template.md` | Conteudo na task de sincronizacao |
+| Seção do template | Conteúdo na task de sincronização |
 |:---|:---|
-| Tabela de metadata | Todas as colunas preenchidas: Status `TODO`, Data, Task, Feature, Referencia PRD, Referencia Tech Spec |
-| 1. Contexto e Objetivo | Objetivo da sincronizacao e citacao dos `DIV-XXX` aprovados |
-| 2.1 Funcionais | Um item por divergencia aprovada, no formato `- [ ] (DIV-XXX) [descricao da alteracao]` |
-| 2.3 Contratos | Nao aplicavel a esta task; declarar `Nao aplicavel: esta task edita documentacao, nao implementa contratos da secao 4 do techspec.md` |
-| 3. Plano de Execucao | **Uma sub-tarefa (Passo) por documento CORE impactado** |
-| 5.1 Arquivos de Leitura | `prd.md`, `techspec.md` e cada documento CORE impactado |
-| 5.2 Arquivos para Escrita | **Exclusivamente** os documentos CORE impactados; nenhum outro |
-| 6. Criterios de Aceite | Criterios do template, mais os criterios especificos de edicao descritos em 13.6 |
+| Metadata | Todas as colunas: Status `TODO`, Data, Task, Feature, Referência PRD, Referência Tech Spec |
+| 1. Contexto e Objetivo | Objetivo da sincronização e citação dos `DIV-XXX` aprovados |
+| 2.1 Funcionais | Um item por divergência: `- [ ] (DIV-XXX) [descrição da alteração]` |
+| 2.3 Contratos | `Não aplicável: esta task edita documentação, não implementa contratos da seção 4 do techspec.md` |
+| 3. Plano de Execução | **Uma sub-tarefa (Passo) por documento CORE impactado** |
+| 5.1 Arquivos de Leitura | `prd.md`, `techspec.md` e cada CORE impactado |
+| 5.2 Arquivos para Escrita | **Exclusivamente** os CORE impactados; nenhum outro |
+| 6. Critérios de Aceite | Critérios do template + os específicos de 11.6 |
 | 7. Arquivos Relevantes | Documentos CORE impactados |
-| 9. Skills e MCPs | Preenchida conforme as regras criticas 10 e 11 ja existentes, ou com declaracao de ausencia e justificativa |
+| 9. Skills e MCPs | Conforme regras 8 e 9, ou declaração de ausência com justificativa |
 
-**13.5 Schema obrigatorio de cada sub-tarefa da secao 3 da task gerada:**
+**11.5 Schema de cada sub-tarefa da seção 3 da task gerada:**
 
 ```
 - [ ] **Passo 1: Sincronizar specs/core/architecture.md**
@@ -358,84 +245,64 @@ Responda com o DE ACORDO do plano e os IDs que aprova.
       atualizada; campo **Status** inalterado; demais secoes byte-identicas ao original.
 ```
 
-**VALIDACOES BLOQUEANTES NA GERACAO** (verificar antes de gravar a task de sincronizacao):
-- [ ] O numero de sub-tarefas e **exatamente igual** ao numero de documentos CORE distintos referenciados pelas divergencias aprovadas.
-- [ ] Toda sub-tarefa referencia ao menos um `DIV-XXX`.
-- [ ] A tabela de metadata da task tem todas as colunas preenchidas.
-- [ ] A secao 9 esta preenchida ou traz declaracao explicita de ausencia.
-- Se qualquer resposta = NAO -> corrigir antes de gravar.
+**Validações bloqueantes na geração:** número de sub-tarefas **exatamente igual** ao de documentos CORE distintos referenciados pelas divergências aprovadas; toda sub-tarefa referencia ao menos um `DIV-XXX`; metadata com todas as colunas; seção 9 preenchida ou com ausência declarada.
 
-**13.6 Regras de edicao que a task gerada DEVE carregar em seu proprio conteudo.** A task de sincronizacao e auto-suficiente: as regras abaixo sao transcritas nela, de modo que seu executor nao precise reabrir o PRD e a Tech Spec.
+**11.6 Regras de edição transcritas na própria task gerada** (para o executor não reabrir PRD/Tech Spec):
 
-| Alteracao | Condicao | Comportamento |
+| Alteração | Condição | Comportamento |
 |:---|:---|:---|
-| (a) Edicao de conteudo | Sempre | Editar **exclusivamente** as secoes listadas nas divergencias aprovadas, preservando integralmente o restante do documento |
-| (b) Atualizacao de data | Somente quando o documento possuir a tabela de metadata do criterio 12.3 | Atualizar a linha `**Data**` para a data da execucao, no formato `dd/MM/aaaa` ja usado pelos documentos CORE |
+| (a) Edição de conteúdo | Sempre | Editar **exclusivamente** as seções das divergências aprovadas, preservando o resto do documento |
+| (b) Atualização de data | Só com a tabela de metadata do critério 10.3 | Atualizar `**Data**` para a data da execução, formato `dd/MM/aaaa` |
 
-- O campo `**Status**` do documento CORE permanece **inalterado** em qualquer hipotese.
-- Nenhum documento CORE inexistente e criado.
-- Nenhuma sincronizacao no sentido inverso: `prd.md` e `techspec.md` nao sao reescritos.
-- Documento CORE sem tabela de metadata recebe apenas a alteracao (a), em comportamento silencioso, sem nenhuma mensagem ao usuario (MSG-009).
+- O campo `**Status**` do CORE permanece **inalterado** sempre.
+- Nenhum CORE inexistente é criado. Sem sincronização inversa: `prd.md`/`techspec.md` não são reescritos.
+- CORE sem tabela de metadata recebe só a alteração (a), silenciosamente (MSG-009).
 
 | ID | Gatilho | Severidade | Mensagem |
 |:---|:---|:---|:---|
 | MSG-007 | Todas as divergências descartadas pelo usuário | Baixa | `Nenhuma divergência aprovada. Task de sincronização não gerada.` |
-| MSG-008 | Seção alvo não localizada durante a execução | Média | `Seção [nome] não localizada em [caminho]. Atualização não aplicada — revisar manualmente.` |
-| MSG-009 | Documento CORE sem tabela de metadata | Baixa | Nenhuma mensagem; comportamento silencioso |
+| MSG-008 | Seção alvo não localizada na execução | Média | `Seção [nome] não localizada em [caminho]. Atualização não aplicada — revisar manualmente.` |
+| MSG-009 | CORE sem tabela de metadata | Baixa | Nenhuma mensagem; comportamento silencioso |
 
-Emitida a MSG-007, nenhuma task de sincronizacao e gerada, nenhum documento CORE e alterado e a geracao de tasks prossegue normalmente. Emitida a MSG-008 durante a execucao da task, a sub-tarefa e registrada como nao aplicada, o documento e preservado intacto e as demais sub-tarefas prosseguem.
+MSG-007 -> nenhuma task de sincronização, nenhum CORE alterado, geração prossegue. MSG-008 -> sub-tarefa registrada como não aplicada, documento preservado, demais sub-tarefas prosseguem.
 
     </critical_rules>
 
     <input_data>
-    Argumentos fornecidos pelo usuário:
-        1. `PRD_PATH`: Caminho do arquivo de requisitos `./specs/features/[nome-da-funcionalidade]/prd.md`.
-        2. `TECHSPEC_PATH`: Caminho do arquivo de especificação técnica `./specs/features/[nome-da-funcionalidade]/techspec.md`.
+        1. `PRD_PATH`: `./specs/features/[nome-da-funcionalidade]/prd.md`.
+        2. `TECHSPEC_PATH`: `./specs/features/[nome-da-funcionalidade]/techspec.md`.
     </input_data>
 
     <execution_flow>
-        1.  **Análise e Contexto**: Leia o PRD e o TechSpec fornecidos. Entenda o objetivo macro e as restrições.
-        2.  **Quebra de Tarefas (Thinking Process)**:
-                - Identifique dependências (O que precisa existir antes?).
-                 - Quebre em passos lógicos e sequenciais.
-                 - Para cada passo, pergunte-se: "As instruções são auto-suficientes? Um executor conseguiria realizar a tarefa apenas lendo este arquivo, sem contexto adicional?" Se a resposta for "não", detalhe mais.
-        3.  **Descoberta de Skills e MCPs**: Execute a regra crítica 10 (BLOCO-DESC), levantando o inventário nos escopos PROJETO e GLOBAL, e aplique a regra crítica 11 para selecionar, task a task, os itens pertinentes. Esta etapa DEVE ocorrer antes do Checkpoint com o usuário.
-        4.  **Cruzamento com os Documentos CORE**: Execute a regra critica 12 (inventario dos quatro alvos, extracao das decisoes, cruzamento e classificacao) e prepare a task de sincronizacao conforme a regra critica 13. Esta etapa DEVE ocorrer ANTES do Checkpoint com o usuario e e estritamente de leitura.
-        5.  **Checkpoint**: Valide o plano com o usuário apresentando, na MESMA mensagem, a lista de arquivos de task e a lista de divergências DIV-XXX, no formato obrigatório da regra crítica 13.1.
-        6.  **Geração**: Após aprovação, crie os arquivos Markdown completos.
+        1. **Análise e Contexto:** leia o PRD e o Tech Spec. Entenda o objetivo macro e as restrições.
+        2. **Quebra de Tarefas:** identifique dependências, quebre em passos lógicos e sequenciais. Pergunte-se: "um executor realizaria a task só lendo este arquivo?" Se não, detalhe mais.
+        3. **Research por task (exploração de código):** para cada task, explore o código existente (arquivos similares, imports, config) para (a) preencher `Arquivos Alvo`/§5 com caminhos reais e (b) produzir 1 exemplo canônico CURTO e representativo no §4, ancorado em um padrão já usado no repositório. Consulte MCPs/skills disponíveis (regra 9) para validar APIs/versões. O exemplo é curto: o few-shot rico vive na task gerada, não no template.
+        4. **Descoberta de Skills e MCPs:** execute a regra 8 (BLOCO-DESC) nos escopos PROJETO e GLOBAL e aplique a regra 9 por task. Antes do Checkpoint.
+        5. **Cruzamento com os CORE:** execute a regra 10 e prepare a task de sincronização conforme a regra 11. Antes do Checkpoint, estritamente de leitura.
+        6. **Checkpoint:** valide o plano com o usuário apresentando, na MESMA mensagem, a lista de tasks e as divergências `DIV-XXX`, no formato da regra 11.1.
+        7. **Geração:** após aprovação, crie os arquivos Markdown completos, sem os comentários `<!-- ... -->` dos templates.
     </execution_flow>
 
-     </templates>
-      **Destino Base para cada task:** `./specs/features/[nome-da-funcionalidade]/`
-      **Arquivo Tasks :** `./specs/features/[nome-da-funcionalidade]/tasks.md`
-     </templates>
+    <destino_dos_artefatos>
+        Destino base de cada task: `./specs/features/[nome-da-funcionalidade]/`
+        Índice: `./specs/features/[nome-da-funcionalidade]/tasks.md`
+        Template obrigatório de cada task: `./specs/templates/task-template.md`
+        Template do índice: `./specs/templates/tasks-template.md`
+    </destino_dos_artefatos>
 
     <output_format>
-    Se (e somente se) o usuário aprovar o plano inicial, a saída final deve seguir estritamente este formato para facilitar a automação de salvamento de arquivos:
+        Somente após o usuário aprovar o plano, a saída segue estritamente este formato, para automação do salvamento:
 
-    FILE_PATH: `./specs/features/[nome-da-funcionalidade]/tasks.md`
-    ```markdown
-    [Conteudo do tasks.md]
-    ```
+        FILE_PATH: `./specs/features/[nome-da-funcionalidade]/tasks.md`
+        ```markdown
+        [Conteudo do tasks.md]
+        ```
+        (e, na mesma saída, um bloco FILE_PATH por `task-N.md` gerado)
     </output_format>
-	
-	<critical>
-		** - APÓS A APROVAÇÃO DO USUÁRIO VOCÊ DEVE SALVAR TODOS OS ARQUIVOS DE TASK SEGUINDO A NOMENCLATURA INFORMADA E SALVAR NO ARQUIVOS `TASKS` NO MESMO DIRETÓRIO DO `PRD.MD`, `TECHSPEC.MD`
-		** - VOCÊ DEVE SEGUIR ESTRITAMENTE O TEMPLATE @specs/templates/task-template.md **
-		** - A TABELA METADATADETAILS CONTÉM AS SEGUINTES COLUNAS: 
-                - Status: Status da task
-			    - Data: Data e Hora de geração da task
- 			    - Task: Código Sequencial da Task
-			    - Feature: Nome da Feature
-			    - Referência PRD: Caminho/link do PRD utilizado para criação da feature/task
-			    - Referência TECHSPEC: : Caminho/link da Tech Spec utilizada para criação da feature/task 
-			    
-			    TODAS AS COLUNAS DEVEM SER OBRIGATÓRIAMENTE PREENCHIDAS**
-		** - TODA TASK GERADA DEVE CONTER A SECAO `## 9. Skills e MCPs` PREENCHIDA, COM OS CINCO CAMPOS OBRIGATORIOS POR ITEM (nome, tipo, origem, motivo e passos de aplicacao), OU COM A DECLARACAO EXPLICITA DE AUSENCIA E JUSTIFICATIVA. E PROIBIDO OMITIR A SECAO, DEIXA-LA EM BRANCO OU MANTER PLACEHOLDERS **
-		** - E PROIBIDO GRAVAR UMA TASK COM ITEM DECLARADO SEM TODOS OS CINCO CAMPOS PREENCHIDOS **
-		** - O INVENTARIO DOS QUATRO ALVOS CORE E EXECUTADO EM 100% DAS EXECUCOES DESTE COMANDO, SEM FLAG, ARGUMENTO OU OPT-IN **
-		** - E PROIBIDO ALTERAR QUALQUER DOCUMENTO CORE DURANTE A GERACAO DE TASKS. A ALTERACAO OCORRE EXCLUSIVAMENTE NA EXECUCAO DA TASK DE SINCRONIZACAO GERADA A PARTIR DE DIVERGENCIAS APROVADAS **
-	</critical>
 
-    **Command Version:** 0.8.0
+    <critical>
+        Antes de gerar, releia `<critical_rules>`. Reforço: uma camada por task; todo `CT/ENV/SEC-XXX` mapeado; §9 de cada task com os cinco campos ou ausência justificada (nunca vazia); metadata com todas as colunas; comentários `<!-- ... -->` removidos dos artefatos; nada de alterar documentos CORE aqui - só a task de sincronização, a partir de divergências aprovadas.
+    </critical>
+
+    **Command Version:** 0.9.0
 </system_instructions>
