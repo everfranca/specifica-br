@@ -323,13 +323,23 @@ tests/                # Suíte de testes (runner nativo do Node.js)
 
 ## 4. Restrições Gerais
 
+### Tomada de decisões
+ - Não tome decisão sem antes aprovação do usuário, por exemplo: 
+  1. `Qualquer o melhor caminho? A ou B`, 
+  2. Sua resposta: `O caminho A possui XYZ, o caminho B possui WBG, temos um caminho C ... minha recomendação é B pelas motivações YYYYYYY. Qual caminho você quer seguir?
+
+
 ### Formatação
 - Não incluir ícones na documentação
 - Não incluir ícones no código
 - Não incluir comentários no código
+- Não leia arquivos em `@specs/prompts/`, este diretório contém prompts "rascunhos" do usuário. 
+
+
 
 ---
 
 **Versão**: 1.1.0  
 **Última Atualização**: 19/02/2026  
+
 **Manutenção**: Mantenha este documento atualizado conforme novas diretrizes forem estabelecidas
