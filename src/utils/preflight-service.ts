@@ -19,6 +19,7 @@ import { getExecutavel, getToolDisplayName } from './tool-adapters/tool-registry
 import { parseJsonc } from './jsonc.js';
 
 const COMANDO_EXECUTAR_TASK = 'executar-task.md';
+const SKILL_EXECUTAR_TASK = path.join('executar-task', 'SKILL.md');
 
 /**
  * Piso de versao da CLI por ferramenta (CT-034). Versao abaixo do piso e AVISO, nunca
@@ -170,6 +171,14 @@ export class PreflightService {
     }
   }
 
+  /**
+   * Grupo B: o executor do lote depende do artefato `executar-task`.
+   *
+   * O comando e a forma primaria (o argv do OpenCode usa `--command`), mas o caminho
+   * `skills/executar-task/SKILL.md` tambem e aceito como candidato para tornar o
+   * preflight a prova de futuro: se um dia o comando migrar para skill, o lote nao
+   * quebra nesta verificacao.
+   */
   private async grupoB(
     contexto: PreflightContexto,
     mapping: ToolMapping | null
@@ -179,17 +188,32 @@ export class PreflightService {
       return;
     }
 
-    const candidatos: string[] = [];
+    const candidatosComando: string[] = [];
     if (mapping.commands) {
-      candidatos.push(path.resolve(contexto.projetoDir, mapping.commands, COMANDO_EXECUTAR_TASK));
+      candidatosComando.push(path.resolve(contexto.projetoDir, mapping.commands, COMANDO_EXECUTAR_TASK));
     }
     if (mapping.global?.commands) {
-      candidatos.push(path.join(this.caminhoGlobal(mapping.global.commands, contexto.home), COMANDO_EXECUTAR_TASK));
+      candidatosComando.push(path.join(this.caminhoGlobal(mapping.global.commands, contexto.home), COMANDO_EXECUTAR_TASK));
     }
 
-    for (const candidato of candidatos) {
+    for (const candidato of candidatosComando) {
       if (await fs.pathExists(candidato)) {
         this.add('B', 'comando-executar-task', 'OK', `comando executar-task instalado: ${candidato}`);
+        return;
+      }
+    }
+
+    const candidatosSkill: string[] = [];
+    if (mapping.skills) {
+      candidatosSkill.push(path.resolve(contexto.projetoDir, mapping.skills, SKILL_EXECUTAR_TASK));
+    }
+    if (mapping.global?.skills) {
+      candidatosSkill.push(path.join(this.caminhoGlobal(mapping.global.skills, contexto.home), SKILL_EXECUTAR_TASK));
+    }
+
+    for (const candidato of candidatosSkill) {
+      if (await fs.pathExists(candidato)) {
+        this.add('B', 'comando-executar-task', 'OK', `comando executar-task disponivel via skill: ${candidato}`);
         return;
       }
     }

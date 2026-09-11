@@ -60,7 +60,7 @@ export class FileService {
       throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
     }
 
-    if (mappings.length !== 5) {
+    if (mappings.length < 1) {
       throw new Error('Erro: Arquivo tools-mapping.json com formato inválido.');
     }
 
@@ -105,10 +105,13 @@ export class FileService {
 
   /**
    * Monta a lista de destinos das ferramentas selecionadas, deduplicando por (kind, dir).
-   * Ferramentas que compartilham diretorio -- Gemini CLI e OpenCode em ~/.agents/skills/,
-   * ou todas em specs/templates/ -- geram um unico target creditado a todas elas.
+   * Ferramentas que compartilham diretorio -- Gemini CLI, OpenCode e Codex em
+   * ~/.agents/skills/ -- geram um unico target creditado a todas elas.
+   *
+   * Templates so entram na lista quando `includeTemplates` e verdadeiro (flag
+   * `--templates` do init): por padrao os templates vivem apenas dentro das skills.
    */
-  resolveTargets(tools: ToolMapping[], scope: InstallScope): CopyTarget[] {
+  resolveTargets(tools: ToolMapping[], scope: InstallScope, includeTemplates = false): CopyTarget[] {
     const targets = new Map<string, CopyTarget>();
 
     const add = (kind: TargetKind, dir: string, toolName: string): void => {
@@ -136,6 +139,10 @@ export class FileService {
         }
       }
 
+      if (!includeTemplates) {
+        continue;
+      }
+
       // Templates sao artefato versionavel do projeto e nunca vao para o escopo global.
       const templatesDir = this.resolveProjectDir(tool.templates);
 
@@ -151,7 +158,7 @@ export class FileService {
     const entry = tool.global?.[kind];
 
     if (!entry) {
-      throw new Error(`Erro: Ferramenta ${tool.name} não possui diretório global mapeado para ${kind}.`);
+      return undefined;
     }
 
     return resolveGlobalPath(entry);
@@ -161,8 +168,8 @@ export class FileService {
     return relative ? path.join(process.cwd(), relative) : undefined;
   }
 
-  async createStructure(tools: ToolMapping[], scope: InstallScope): Promise<CopyResult> {
-    const targets = this.resolveTargets(tools, scope);
+  async createStructure(tools: ToolMapping[], scope: InstallScope, includeTemplates = false): Promise<CopyResult> {
+    const targets = this.resolveTargets(tools, scope, includeTemplates);
 
     for (const target of targets) {
       const sourceDir = path.join(this.boilerplateRoot, target.kind);

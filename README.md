@@ -37,17 +37,18 @@ npm install -g specifica-br
 
 ### `specifica-br init`
 
-Instala os comandos e skills SDD no **diretório global** da ferramenta de IA e cria os templates no projeto atual.
+Instala os comandos e skills SDD no **diretório global** da ferramenta de IA. Os templates ficam embutidos nas próprias skills (em `assets/`).
 
 ```bash
-specifica-br init            # instalação global (padrão)
-specifica-br init --local    # instala tudo dentro do projeto atual
+specifica-br init                     # instalação global (padrão)
+specifica-br init --local             # instala tudo dentro do projeto atual
+specifica-br init --local --templates # além disso, copia os templates para specs/templates/ do projeto
 ```
 
 **O que faz:**
-- Permite selecionar **uma ou mais** ferramentas de IA (OpenCode, ClaudeCode, Cursor, Gemini CLI, Kiro)
-- Instala os 7 comandos e as 2 skills no diretório global de cada ferramenta — basta rodar uma vez por máquina, e eles ficam disponíveis em todos os projetos
-- Cria os 7 templates em `specs/templates/` **no projeto**, por serem artefatos versionáveis do SDD
+- Permite selecionar **uma ou mais** ferramentas de IA (OpenCode, ClaudeCode, Cursor, Gemini CLI, Kiro, Codex)
+- Instala os 7 comandos e as 8 skills no diretório global de cada ferramenta — basta rodar uma vez por máquina, e eles ficam disponíveis em todos os projetos
+- Os templates vivem dentro das skills; com `--templates`, os 7 templates também são copiados para `specs/templates/` **no projeto** (customização e versionamento por override)
 - Detecta instalações antigas dentro do projeto (`.claude/commands/`, `.opencode/command/`, `.agents/skills/`, etc.) e oferece removê-las, evitando comandos duplicados
 - Exibe informações sobre o workflow SDD
 
@@ -56,6 +57,7 @@ specifica-br init --local    # instala tudo dentro do projeto atual
 | Opção | Descrição |
 |:---|:---|
 | `--local` | Instala comandos e skills dentro do projeto atual, em vez do diretório global. Reproduz o comportamento das versões anteriores. |
+| `--templates` | Copia também os 7 templates para `specs/templates/` do projeto. Projetos legados com o diretório commitado continuam funcionando: o template do projeto sempre prevalece sobre o da skill. |
 
 **Exemplo de uso:**
 ```bash
@@ -75,10 +77,9 @@ Selecione as ferramentas de IA (espaço para marcar, enter para confirmar):
     • ~/.claude/commands/ (ClaudeCode)
   Skills:
     • ~/.claude/skills/ (ClaudeCode)
-  Templates:
-    • specs/templates (ClaudeCode)
 
-  Os templates continuam no projeto, em specs/templates/.
+  Os templates ficam dentro das próprias skills (em assets/).
+  Use --templates para copiá-los também em specs/templates/ do projeto.
 
 [?] Deseja continuar? Yes
 
@@ -91,8 +92,12 @@ Selecione as ferramentas de IA (espaço para marcar, enter para confirmar):
 ✓ Estrutura SDD criada com sucesso!
 ```
 
-> Ao marcar Gemini CLI e OpenCode juntos, as skills são gravadas uma única vez: as duas
-> ferramentas compartilham `~/.agents/skills/`.
+> Ao marcar Gemini CLI, OpenCode e/ou Codex juntos, as skills são gravadas uma única vez:
+> as ferramentas compartilham `~/.agents/skills/`.
+
+> Os dispatchers de comando são artefatos derivados: `npm run build` os regenera a partir do
+> `SKILL.md` de cada skill (fonte única) e falha se o arquivo commitado divergir. Nunca edite
+> `src/assets/boilerplate/commands/<nome>.md` à mão — altere a skill correspondente.
 
 ### `specifica-br help`
 
@@ -571,9 +576,9 @@ Realiza code review do código implementado.
 
 ## Estrutura do Projeto
 
-A partir da versão 1.6, comandos e skills ficam no **diretório global do usuário** — instalados uma única vez por máquina — e apenas os templates ficam no projeto.
+A partir da versão 1.6, comandos e skills ficam no **diretório global do usuário** — instalados uma única vez por máquina. Desde a Fase 3 da migração para skills, os templates ficam embutidos nas próprias skills; `specs/templates/` no projeto é opt-in (`init --templates`).
 
-**Estrutura do projeto após `specifica-br init`:**
+**Estrutura do projeto após `specifica-br init --templates`** (sem a flag, `specs/` não recebe templates):
 
 ```
 seu-projeto/
@@ -597,6 +602,7 @@ seu-projeto/
 | Gemini CLI | `~/.gemini/commands/` | `%USERPROFILE%\.gemini\commands\` | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
 | Kiro | `~/.kiro/commands/` | `%USERPROFILE%\.kiro\commands\` | `~/.kiro/skills/` | `%USERPROFILE%\.kiro\skills\` |
 | OpenCode | `$XDG_CONFIG_HOME/opencode/command/` (padrão `~/.config/opencode/command/`) | `%APPDATA%\opencode\command\` | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
+| Codex | sem comandos (custom prompts são deprecated) | sem comandos | `~/.agents/skills/` | `%USERPROFILE%\.agents\skills\` |
 
 `~` e `%USERPROFILE%` correspondem a `/home/usuario` (Linux), `/Users/usuario` (macOS) e `C:\Users\usuario` (Windows 10/11).
 
@@ -622,7 +628,7 @@ seu-projeto/
 │       └── techspec-generator/
 │           └── SKILL.md
 └── specs/
-    └── templates/
+    └── templates/ (apenas com --templates)
 ```
 
 **Comandos disponíveis (7):**
@@ -634,9 +640,15 @@ seu-projeto/
 6. `/gerar-visao` - Gera visão estratégica
 7. `/realizar-codereview` - Realiza code review
 
-**Skills disponíveis (2):**
+**Skills disponíveis (8):**
 1. `product-manager` - Skill especializada para criar PRDs, definindo requisitos funcionais, regras de negócio e critérios de aceitação
 2. `techspec-generator` - Skill especializada para criar Tech Specs, definindo arquitetura técnica, componentes e plano de implementação
+3. `gerar-prd` - Skill do fluxo de PRD (discovery, entrevista, quality gate e validador)
+4. `gerar-techspec` - Skill do fluxo de Tech Spec (varredura de contratos e validador)
+5. `gerar-tasks` - Skill do fluxo de tarefas (atomicidade, rastreabilidade e validador)
+6. `gerar-visao` - Skill do fluxo de visão de produto para projetos novos
+7. `gerar-contexto` - Skill do fluxo de inferência de contexto para projetos existentes
+8. `realizar-codereview` - Skill do protocolo de code review com veredito
 
 **Templates disponíveis (7):**
 1. `prd-template.md` - Template de PRD

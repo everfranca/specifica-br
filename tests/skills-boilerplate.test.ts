@@ -34,8 +34,8 @@ function extrairFrontmatter(conteudo: string): Record<string, string> {
   throw new Error('Frontmatter sem fechamento');
 }
 
-function executarValidador(script: string, alvo: string): { codigo: number; saida: string } {
-  const resultado = spawnSync(process.execPath, [script, alvo], { encoding: 'utf8' });
+function executarValidador(script: string, ...alvos: string[]): { codigo: number; saida: string } {
+  const resultado = spawnSync(process.execPath, [script, ...alvos], { encoding: 'utf8' });
 
   return {
     codigo: resultado.status ?? 1,
@@ -352,39 +352,52 @@ test('toda skill do boilerplate tem frontmatter com name igual ao diretorio e de
   }
 });
 
-test('dispatchers de gerar-prd e realizar-codereview preservam frontmatter e apontam para a skill', () => {
+test('dispatchers das skills convertidas apontam para a skill e sao neutros de ferramenta e SO', () => {
   const casos = [
-    {
-      arquivo: 'gerar-prd.md',
-      skill: 'gerar-prd',
-      description: 'Gera o PRD de uma funcionalidade a partir da descrição do usuário.',
-      argumentHint: '"[descrição da funcionalidade]"'
-    },
-    {
-      arquivo: 'realizar-codereview.md',
-      skill: 'realizar-codereview',
-      description: 'Faz code review de uma branch, arquivo ou codebase e gera relatório.',
-      argumentHint: '"[branch, arquivo ou diretório]"'
-    }
+    { arquivo: 'gerar-prd.md', skill: 'gerar-prd', argumentHint: '"[descrição da funcionalidade]"' },
+    { arquivo: 'realizar-codereview.md', skill: 'realizar-codereview', argumentHint: '"[branch, arquivo ou diretório]"' },
+    { arquivo: 'gerar-techspec.md', skill: 'gerar-techspec', argumentHint: '"[caminho do prd.md]"' },
+    { arquivo: 'gerar-tasks.md', skill: 'gerar-tasks', argumentHint: '"[caminho do prd.md] [caminho do techspec.md]"' },
+    { arquivo: 'gerar-visao.md', skill: 'gerar-visao', argumentHint: '"[ideia do projeto]"' },
+    { arquivo: 'gerar-contexto.md', skill: 'gerar-contexto', argumentHint: '"[caminho do projeto]"' }
   ];
 
   for (const caso of casos) {
     const conteudo = readFileSync(path.join(DIRETORIO_COMMANDS, caso.arquivo), 'utf-8');
     const frontmatter = extrairFrontmatter(conteudo);
 
-    assert.equal(frontmatter.description, caso.description, `${caso.arquivo}: description do frontmatter alterada`);
+    assert.ok(
+      frontmatter.description && frontmatter.description.length > 0,
+      `${caso.arquivo}: description derivada da skill esta vazia`
+    );
     assert.equal(frontmatter['argument-hint'], caso.argumentHint, `${caso.arquivo}: argument-hint do frontmatter alterado`);
     assert.ok(conteudo.includes(`\`${caso.skill}\``), `${caso.arquivo}: dispatcher nao referencia a skill ${caso.skill}`);
     assert.ok(conteudo.includes('assets/'), `${caso.arquivo}: dispatcher nao menciona assets/`);
     assert.ok(conteudo.includes('scripts/'), `${caso.arquivo}: dispatcher nao menciona scripts/`);
 
-    const ferramentas = ['Claude', 'OpenCode', 'Cursor', 'Gemini', 'Kiro'];
+    const ferramentas = ['Claude', 'OpenCode', 'Cursor', 'Gemini', 'Kiro', 'Codex'];
     for (const ferramenta of ferramentas) {
       assert.ok(!conteudo.includes(ferramenta), `${caso.arquivo}: dispatcher menciona ferramenta "${ferramenta}"`);
     }
 
     assert.ok(!conteudo.includes('\\'), `${caso.arquivo}: dispatcher contem barra invertida`);
   }
+});
+
+test('executar-task permanece comando integral, nunca dispatcher gerado', () => {
+  const conteudo = readFileSync(path.join(DIRETORIO_COMMANDS, 'executar-task.md'), 'utf-8');
+  const frontmatter = extrairFrontmatter(conteudo);
+
+  assert.equal(
+    frontmatter.description,
+    'Executa os itens pendentes de um task-N.md e atualiza o status na task e no tasks.md.',
+    'executar-task.md: description alterada'
+  );
+  assert.ok(
+    !conteudo.includes('apenas um dispatcher'),
+    'executar-task.md: virou dispatcher - a conversao e proibida'
+  );
+  assert.ok(conteudo.length > 1000, 'executar-task.md: conteudo integral foi perdido');
 });
 
 test('validador do gerar-prd aprova PRD conforme', () => {
@@ -470,6 +483,862 @@ test('validador do realizar-codereview rejeita relatorio com violacoes conhecida
       'status de veredito inválido',
       'Justificativa',
       'Pré-condições'
+    ];
+
+    for (const esperado of esperados) {
+      assert.ok(resultado.saida.includes(esperado), `saida deveria mencionar: ${esperado}`);
+    }
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+const TECHSPEC_CONFORME = [
+  '# Technical Specification: recibo-digital',
+  '',
+  '| Metadata | Details |',
+  '| :--- | :--- |',
+  '| **Status** | Draft |',
+  '| **Data** | 2026-09-10 |',
+  '| **Referência PRD** | [Link PRD](./prd.md) |',
+  '<!-- Status: DRAFT -> IN_PROGRESS -> APPROVED -->',
+  '',
+  '---',
+  '',
+  '## 1. Introdução e contexto',
+  'Contexto da feature de recibo digital.',
+  '',
+  '## 2. High-Level Architecture [Obrigatório]',
+  'Componente único de aplicação.',
+  '',
+  '## 3. Design e Persistência de Dados [Se aplicável]',
+  'Tabela recibos.',
+  '',
+  '## 4. Contratos de Integracao (Boundaries) [Obrigatorio]',
+  '',
+  '### Tabela Resumo de Contratos',
+  '',
+  '| ID | Fronteira | Contrato | Protocolo | Origem | Secao Detalhe |',
+  '|:---|:---|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | HTTP | PROPOSTO | 4.1 |',
+  '| CT-002 | Backend-Database | INSERT recibos | SQL | DESCOBERTO (schema.sql:12) | 4.2 |',
+  '| ENV-001 | Application-Environment | RECIBO_API_KEY | env | SOLICITADO | 4.8 |',
+  '',
+  '### 4.1 Contrato Client-Backend [Se aplicavel]',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Como Obtido** | PROPOSTO |',
+  '',
+  '### 4.8 Contrato Application-Environment [Obrigatorio]',
+  'Variável RECIBO_API_KEY obrigatória.',
+  '',
+  '## 5. Lógica de negócio e algoritmos principais [Obrigatório]',
+  'Fluxo principal passo a passo.',
+  '',
+  '## 6. Observability & Operational Readiness [Se aplicável]',
+  'Logging com correlationId.',
+  '',
+  '## 7. Segurança & Compliance [Se aplicável]',
+  'Inputs sanitizados.',
+  '',
+  '## 8. Plano de Implementação [Obrigatório]',
+  'Passo 1 e Passo 2 independentes.',
+  '',
+  '## 9. Skills e MCPs Utilizados [Obrigatorio]',
+  '',
+  '| Nome | Tipo | Origem | Situacao | Secoes/Decisoes Embasadas |',
+  '|:---|:---|:---|:---|:---|',
+  '| context7 | MCP | GLOBAL | UTILIZADO | Secao 4: contratos de terceiros |'
+].join('\n');
+
+const TECHSPEC_COM_VIOLACOES = [
+  '# Technical Specification: {{FEATURE_NAME}}',
+  '',
+  '| Metadata | Details |',
+  '| :--- | :--- |',
+  '| **Status** | Draft |',
+  '| **Data** | {{DATA_ATUAL}} |',
+  '<!-- Status: DRAFT -> IN_PROGRESS -> APPROVED -->',
+  '<!-- Formato: instruções de autoria que não devem permanecer no artefato. -->',
+  '',
+  '## 1. Introdução e contexto',
+  'Contexto.',
+  '',
+  '## 2. High-Level Architecture [Obrigatório]',
+  'Componente.',
+  '',
+  '## 3. Design e Persistência de Dados [Se aplicável]',
+  'Tabela.',
+  '',
+  '## 4. Contratos de Integracao (Boundaries) [Obrigatorio]',
+  '',
+  '### Tabela Resumo de Contratos',
+  '',
+  '| ID | Fronteira | Contrato | Protocolo | Origem | Secao Detalhe |',
+  '|:---|:---|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | HTTP | {{ORIGEM}} | 4.1 |',
+  '',
+  '### 4.1 Contrato Client-Backend [Se aplicavel]',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Como Obtido** | [DESCOBERTO / SOLICITADO / PROPOSTO] |',
+  '',
+  '## 5. Lógica de negócio e algoritmos principais [Obrigatório]',
+  'Fluxo.',
+  '',
+  '## 6. Observability & Operational Readiness [Se aplicável]',
+  'Logs.',
+  '',
+  '## 7. Segurança & Compliance [Se aplicável]',
+  'Segurança.',
+  '',
+  '## 8. Plano de Implementação [Obrigatório]',
+  'Passos.'
+].join('\n');
+
+const TECHSPEC_PARA_TASKS = [
+  '# Technical Specification: recibo-digital',
+  '',
+  '## 4. Contratos de Integracao (Boundaries) [Obrigatorio]',
+  '',
+  '### Tabela Resumo de Contratos',
+  '',
+  '| ID | Fronteira | Contrato | Protocolo | Origem | Secao Detalhe |',
+  '|:---|:---|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | HTTP | PROPOSTO | 4.1 |',
+  '| CT-002 | Backend-Database | INSERT recibos | SQL | DESCOBERTO (schema.sql:12) | 4.2 |',
+  '| ENV-001 | Application-Environment | RECIBO_API_KEY | env | SOLICITADO | 4.8 |',
+  '',
+  '## 7. Segurança & Compliance [Se aplicável]',
+  'Requisito SEC-001 exige sanitização de entrada.'
+].join('\n');
+
+const TECHSPEC_PARA_TASKS_VIOLACAO = [
+  '# Technical Specification: recibo-digital',
+  '',
+  '## 4. Contratos de Integracao (Boundaries) [Obrigatorio]',
+  '',
+  '### Tabela Resumo de Contratos',
+  '',
+  '| ID | Fronteira | Contrato | Protocolo | Origem | Secao Detalhe |',
+  '|:---|:---|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | HTTP | PROPOSTO | 4.1 |',
+  '| CT-002 | Backend-Database | INSERT recibos | SQL | DESCOBERTO (schema.sql:12) | 4.2 |',
+  '| CT-003 | Backend-External | Stripe Payment Intent | HTTP | SOLICITADO | 4.5 |',
+  '',
+  '## 7. Segurança & Compliance [Se aplicável]',
+  'Requisito SEC-001 exige sanitização de entrada.'
+].join('\n');
+
+const TASKS_MD_CONFORME = [
+  '# Lista de tarefas da funcionalidade recibo-digital',
+  '',
+  '## Contratos (Resumo da Techspec Seção 4)',
+  '',
+  '| ID | Fronteira | Contrato | Seção Techspec |',
+  '|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | 4.1 |',
+  '| CT-002 | Backend-Database | INSERT recibos | 4.2 |',
+  '',
+  '## Tarefas',
+  '- [ ] task-1.md - Implementar endpoint de recibos (CT-001)',
+  '- [ ] task-2.md - Criar migration de recibos (CT-002, ENV-001)'
+].join('\n');
+
+const TASKS_MD_COM_VIOLACOES = [
+  '# Lista de tarefas da funcionalidade recibo-digital',
+  '',
+  '## Contratos (Resumo da Techspec Seção 4)',
+  '',
+  '| ID | Fronteira | Contrato | Seção Techspec |',
+  '|:---|:---|:---|:---|',
+  '| CT-001 | Client-Backend | POST /api/v1/recibos | 4.1 |',
+  '| CT-002 | Backend-Database | INSERT recibos | 4.2 |',
+  '',
+  '## Tarefas',
+  '- [ ] task-1.md - Implementar endpoint e migration (CT-001, CT-002)',
+  '- [ ] task-3.md - Sincronizar documentos CORE'
+].join('\n');
+
+function montarTaskConforme(id: string, titulo: string, corpoContratos: string[], secaoNove: string[]): string {
+  return [
+    `# Task: ${id} - ${titulo}`,
+    '',
+    '| Metadata | Details |',
+    '| :--- | :--- |',
+    '| **Status** | TODO |',
+    '| **Data** | 2026-09-10 |',
+    '<!-- Status: TODO -> IN_PROGRESS -> DONE -->',
+    '',
+    '## 1. Contexto e Objetivo',
+    `${titulo}.`,
+    '',
+    '## 2. Requisitos da Tarefa',
+    '### 2.1 Funcionais (Comportamento)',
+    '- [ ] (RF-001) Emitir recibo digital',
+    '',
+    '### 2.3 Contratos (Boundaries)',
+    ...corpoContratos,
+    '',
+    '## 3. Plano de Execução (Sub-tarefas)',
+    '- [ ] **Passo 1: Estruturas de Dados e Contratos**',
+    '- [ ] **Passo 2: Implementação da Lógica de Negócio**',
+    '',
+    '## 4. Detalhes de Implementacao & Contratos',
+    'Schemas conforme techspec.md seção 4.',
+    '',
+    '## 5. Contexto de Arquivos (File Context)',
+    '### 5.1 Arquivos de Leitura',
+    '- `./specs/features/recibo-digital/prd.md`',
+    '',
+    '## 6. Criterios de Aceite (Definition of Done)',
+    '- [ ] O código compila sem erros.',
+    '',
+    '## 7. Arquivos Relevantes (Obrigatório)',
+    'Nenhum adicional.',
+    '',
+    '## 8. Notas de Execução (Scratchpad)',
+    'Atende SEC-001 com sanitização de entrada.',
+    '',
+    '## 9. Skills e MCPs',
+    ...secaoNove
+  ].join('\n');
+}
+
+const TASK_1_CONFORME = montarTaskConforme(
+  '1',
+  'Implementar endpoint de recibos',
+  ['- [ ] (CT-001) POST /api/v1/recibos - Seção 4.1 do techspec.md - origem: PROPOSTO'],
+  [
+    '- **context7**',
+    '    - *Tipo:* MCP',
+    '    - *Origem:* GLOBAL',
+    '    - *Motivo:* Passo 2 valida o schema do CT-001',
+    '    - *Passos de Aplicação:* Passo 2'
+  ]
+);
+
+const TASK_2_CONFORME = montarTaskConforme(
+  '2',
+  'Criar migration de recibos',
+  [
+    '- [ ] (CT-002) INSERT recibos - Seção 4.2 do techspec.md - origem: DESCOBERTO',
+    '- [ ] (ENV-001) RECIBO_API_KEY - obrigatória: sim'
+  ],
+  [
+    'Nenhuma skill ou MCP aplicavel a esta task.',
+    'Justificativa: task de migration sem itens pertinentes no inventario.'
+  ]
+);
+
+const TASK_1_COM_VIOLACOES = [
+  '# Task: 1 - Implementar endpoint e migration',
+  '',
+  '| Metadata | Details |',
+  '| :--- | :--- |',
+  '| **Status** | TODO |',
+  '| **Data** | {{DATA_ATUAL}} |',
+  '<!-- Status: TODO -> IN_PROGRESS -> DONE -->',
+  '<!-- Comentário de autoria que não deve permanecer. -->',
+  '',
+  '## 1. Contexto e Objetivo',
+  'Task mista proposital para o teste.',
+  '',
+  '## 2. Requisitos da Tarefa',
+  '### 2.3 Contratos (Boundaries)',
+  '- [ ] (CT-001) POST /api/v1/recibos - Seção 4.1 do techspec.md',
+  '- [ ] (CT-002) INSERT recibos - Seção 4.2 do techspec.md',
+  '',
+  '## 3. Plano de Execução (Sub-tarefas)',
+  '- [ ] **Passo 1: Estruturas de Dados e Contratos**',
+  '',
+  '## 4. Detalhes de Implementacao & Contratos',
+  'Schemas.',
+  '',
+  '## 5. Contexto de Arquivos (File Context)',
+  '### 5.1 Arquivos de Leitura',
+  '- `./specs/features/recibo-digital/prd.md`',
+  '',
+  '## 6. Criterios de Aceite (Definition of Done)',
+  '- [ ] Compila sem erros.',
+  '',
+  '## 7. Arquivos Relevantes (Obrigatório)',
+  'Nenhum.',
+  '',
+  '## 8. Notas de Execução (Scratchpad)',
+  'Notas.',
+  '',
+  '## 9. Skills e MCPs',
+  '- **context7**',
+  '    - *Tipo:* MCP'
+].join('\n');
+
+const PRODUCT_VISION_CONFORME = [
+  '# PRODUCT VISION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | APPROVED |',
+  '| **Data** | 2026-09-10 |',
+  '| **Projeto** | Agenda de Clínicas |',
+  '<!-- Status: DRAFT to IN_PROGRESS to APPROVED -->',
+  '',
+  '## 1. Declaração do Problema',
+  '**Problema Central:**',
+  '* Clínicas perdem 10% dos agendamentos por conflito de agenda.',
+  '',
+  '## 2. Personas e Público-Alvo',
+  '| Persona | Descrição | Principais Necessidades | Dores Atuais |',
+  '|:---|:---|:---|:---|',
+  '| **Recepcionista** | Opera a agenda diária | Agendar sem conflito | Ligações manuais |',
+  '',
+  '## 3. Proposta de Valor',
+  '**Promessa Central:**',
+  '* Agendamento sem conflito de agenda.',
+  '',
+  '## 4. Métricas de Sucesso',
+  '| Métrica | Como Medir | Meta Inicial | Meta Futura |',
+  '|:---|:---|:---|:---|',
+  '| **Retenção** | % de retornos em 30 dias | 40% | 60% |',
+  '',
+  '## 5. Fronteiras do Produto (Scope)',
+  '### 5.1. Escopo Includente (IN-SCOPE)',
+  '* [ ] **Agendamento:** gestão completa da agenda da clínica',
+  '',
+  '## 6. Jornada do Usuário',
+  '### 6.1. Primeiro Contato',
+  '* Indicação de outras clínicas.',
+  '',
+  '## 7. Riscos e Suposições',
+  '| Suposição | Plano de Validação | Risco se Falso |',
+  '|:---|:---|:---|',
+  '| Clínicas adotam autoatendimento | Entrevistas | Baixa adoção |',
+  '',
+  '## 8. Visão de Futuro',
+  '**Evolução Planejada:**',
+  '* **Curto Prazo (6 meses):** validar a proposta de valor.',
+  '',
+  '## 9. Stakeholders',
+  '| Stakeholder | Interesse | Poder de Influência | Estratégia de Engajamento |',
+  '|:---|:---|:---:|:---|'
+].join('\n');
+
+const ARCHITECTURE_CONFORME = [
+  '# ARCHITECTURE DEFINITION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | APPROVED |',
+  '| **Data** | 2026-09-10 |',
+  '| **Nível de Profundidade** | HIGH_LEVEL |',
+  '<!-- Status: DRAFT to IN_PROGRESS to APPROVED -->',
+  '',
+  '## 1. Paradigma Arquitetural',
+  '**Padrão Arquitetural Principal:**',
+  '* Clean Architecture em monolito modular.',
+  '',
+  '## 2. Stack Tecnológico',
+  '### 2.1. Backend',
+  '| Categoria | Tecnologia | Versão Específica | Justificativa |',
+  '|:---|:---|:---|:---|',
+  '| **Linguagem** | C# | C# 12 | Produtividade do time |',
+  '',
+  '### 2.3. Banco de Dados',
+  '| Categoria | Tecnologia | Versão Específica | Justificativa |',
+  '|:---|:---|:---|:---|',
+  '| **Tipo** | PostgreSQL | 15.x | Dados relacionais |',
+  '',
+  '## 3. Padrões de Design e Convenções',
+  '### 3.1. Convenções de Nomenclatura',
+  '| Tipo | Convenção | Exemplo |',
+  '|:---|:---|:---|',
+  '| **Classes** | PascalCase | UserRepository |'
+].join('\n');
+
+const PRODUCT_VISION_COM_VIOLACOES = [
+  '# PRODUCT VISION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | DRAFT |',
+  '| **Data** | {{DATA_ATUAL}} |',
+  '<!-- Status: DRAFT to IN_PROGRESS to APPROVED -->',
+  '<!-- Instruções de preenchimento que não devem permanecer. -->',
+  '',
+  '## 1. Declaração do Problema',
+  '* Clínicas perdem agendamentos por conflito de agenda.',
+  '',
+  '## 2. Personas e Público-Alvo',
+  '| Persona | Descrição |',
+  '|:---|:---|',
+  '| **Recepcionista** | Opera a agenda |',
+  '',
+  '## 3. Proposta de Valor',
+  '* Interface construída em React para agilizar o agendamento.',
+  '',
+  '## 4. Métricas de Sucesso',
+  '| Métrica | Como Medir | Meta |',
+  '|:---|:---|:---|',
+  '| **Retenção** | % retornos | 40% |',
+  '',
+  '## 5. Fronteiras do Produto (Scope)',
+  '* [ ] **Agendamento:** gestão da agenda',
+  '',
+  '## 6. Jornada do Usuário',
+  '* Indicação de outras clínicas.',
+  '',
+  '## 7. Riscos e Suposições',
+  '| Suposição | Plano | Risco |',
+  '|:---|:---|:---|',
+  '| Adoção do autoatendimento | Entrevistas | Baixa adoção |',
+  '',
+  '## 8. Visão de Futuro',
+  '* **Curto Prazo:** validar a proposta.'
+].join('\n');
+
+const ARCHITECTURE_COM_VIOLACOES = [
+  '# ARCHITECTURE DEFINITION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | DRAFT |',
+  '| **Data** | 2026-09-10 |',
+  '| **Nível de Profundidade** | COMPREHENSIVE |',
+  '',
+  '## 1. Paradigma Arquitetural',
+  '* Clean Architecture.',
+  '',
+  '## 2. Stack Tecnológico',
+  '### 2.1. Backend',
+  '| Categoria | Tecnologia | Versão |',
+  '|:---|:---|:---|',
+  '| **Linguagem** | C# | C# 12 |',
+  '',
+  '## 3. Padrões de Design e Convenções',
+  '* Persona de operação não é tema deste documento, mas citada aqui para o teste de contaminação.'
+].join('\n');
+
+const ARCHITECTURE_CONTEXTO_CONFORME = [
+  '# ARCHITECTURE DEFINITION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | APPROVED |',
+  '| **Data** | 2026-09-10 |',
+  '| **Nível de Profundidade** | COMPREHENSIVE |',
+  '<!-- Status: DRAFT to IN_PROGRESS to APPROVED -->',
+  '',
+  '## 1. Paradigma Arquitetural',
+  '* Clean Architecture com violações locais documentadas como debt técnico.',
+  '',
+  '## 2. Stack Tecnológico',
+  '| Tecnologia | Confiança | Justificativa |',
+  '|:---|:---:|:---|',
+  '| **.NET 8** | 100% | .csproj com TargetFramework net8.0 |',
+  '| **PostgreSQL 15** | 75% | connection string sem versão explícita |',
+  '',
+  '## 12. Integrações Externas',
+  '| Serviço | Tipo | Versão |',
+  '|:---|:---|:---|',
+  '| **Stripe** | Payment | v14.2 |',
+  '',
+  '## 13. Maturidade de Testes',
+  '| Framework | Jest v29.7 |',
+  '|:---|:---|',
+  '| **Nível** | INTERMEDIÁRIO |',
+  '',
+  '## 14. Domínio Inferido (DDD)',
+  '| Contexto | Confiança |',
+  '|:---|:---:|',
+  '| **Users** | 85% |'
+].join('\n');
+
+const PRODUCT_VISION_CONTEXTO_CONFORME = [
+  '# PRODUCT VISION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | DRAFT |',
+  '| **Data** | 2026-09-10 |',
+  '| **Projeto** | Plataforma de Pedidos |',
+  '<!-- Status: DRAFT to IN_PROGRESS to APPROVED -->',
+  '',
+  '## 1. Declaração do Problema',
+  '* Pedidos telefônicos geram erro de anotação.',
+  '',
+  '## 2. Personas e Público-Alvo',
+  '| Persona | Descrição |',
+  '|:---|:---|',
+  '| **Consumidor** | Faz pedidos pelo canal digital |',
+  '',
+  '## 3. Proposta de Valor',
+  '* Pedido sem erro de anotação.',
+  '',
+  '## 4. Métricas de Sucesso',
+  '| Métrica | Como Medir | Meta |',
+  '|:---|:---|:---|',
+  '| **Retenção** | % de recompra | 40% |',
+  '',
+  '## 5. Fronteiras do Produto (Scope)',
+  '* [ ] **Pedidos:** ciclo completo do pedido',
+  '',
+  '## 6. Jornada do Usuário',
+  '* Descoberta por busca orgânica.',
+  '',
+  '## 7. Riscos e Suposições',
+  '| Suposição | Plano | Risco |',
+  '|:---|:---|:---|',
+  '| Adoção do canal digital | Dados de venda | Baixa conversão |',
+  '',
+  '## 8. Visão de Futuro',
+  '* **Curto Prazo:** validar o canal digital.',
+  '',
+  '## 9. Stakeholders',
+  '| Stakeholder | Interesse |',
+  '|:---|:---|',
+  '| **Operação** | Redução de retrabalho |',
+  '',
+  '## 10. Inferências do Código Legado',
+  '| Inferência de Negócio | Fonte Técnica | Confiança |',
+  '|:---|:---|:---:|',
+  '| **Pagamentos assíncronos** | Stripe webhooks, background jobs | 95% |',
+  '| **Sistema em escala** | Rate limiting (Redis), load balancer | 78% |'
+].join('\n');
+
+const ARCHITECTURE_CONTEXTO_COM_VIOLACOES = [
+  '# ARCHITECTURE DEFINITION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | DRAFT |',
+  '| **Data** | 2026-09-10 |',
+  '',
+  '## 1. Paradigma Arquitetural',
+  '* Clean Architecture [REVISAR] com violações detectadas.',
+  '',
+  '## 2. Stack Tecnológico',
+  '* Stack detectada com níveis de confiança.',
+  '',
+  '## 12. Integrações Externas',
+  '| Serviço | Tipo |',
+  '|:---|:---|',
+  '| **Stripe** | Payment |',
+  '',
+  '## 13. Maturidade de Testes',
+  '* Nível INTERMEDIÁRIO. A persona de operação não é tema aqui, citada para o teste.'
+].join('\n');
+
+const PRODUCT_VISION_CONTEXTO_COM_VIOLACOES = [
+  '# PRODUCT VISION',
+  '',
+  '| Metadata | Details |',
+  '|:---|:---|',
+  '| **Status** | DRAFT |',
+  '| **Data** | {{DATA_ATUAL}} |',
+  '| **Projeto** | Plataforma de Pedidos |',
+  '',
+  '## 1. Declaração do Problema',
+  '* Pedidos armazenados em PostgreSQL geram lentidão na anotação.',
+  '',
+  '## 2. Personas e Público-Alvo',
+  '| Persona | Descrição |',
+  '|:---|:---|',
+  '| **Consumidor** | Faz pedidos |',
+  '',
+  '## 3. Proposta de Valor',
+  '* Pedido sem erro.',
+  '',
+  '## 4. Métricas de Sucesso',
+  '| Métrica | Meta |',
+  '|:---|:---|',
+  '| **Retenção** | 40% |',
+  '',
+  '## 5. Fronteiras do Produto (Scope)',
+  '* [ ] **Pedidos:** ciclo completo',
+  '',
+  '## 6. Jornada do Usuário',
+  '* Busca orgânica.',
+  '',
+  '## 7. Riscos e Suposições',
+  '| Suposição | Risco |',
+  '|:---|:---|',
+  '| Adoção digital | Baixa conversão |',
+  '',
+  '## 8. Visão de Futuro',
+  '* Validar o canal.',
+  '',
+  '## 9. Stakeholders',
+  '| Stakeholder | Interesse |',
+  '|:---|:---|',
+  '| **Operação** | Menos retrabalho |'
+].join('\n');
+
+test('bloco de descoberta (BLOCO-DESC CT-006) identico byte a byte entre gerar-techspec e gerar-tasks', () => {
+  const caminhoTechspec = path.join(DIRETORIO_SKILLS, 'gerar-techspec', 'references', 'descoberta-skills-mcps.md');
+  const caminhoTasks = path.join(DIRETORIO_SKILLS, 'gerar-tasks', 'references', 'descoberta-skills-mcps.md');
+  const conteudoTechspec = readFileSync(caminhoTechspec);
+  const conteudoTasks = readFileSync(caminhoTasks);
+
+  assert.ok(conteudoTechspec.equals(conteudoTasks), 'references/descoberta-skills-mcps.md difere entre gerar-techspec e gerar-tasks');
+
+  const texto = conteudoTechspec.toString('utf-8');
+  assert.ok(texto.includes('<!-- INICIO BLOCO-DESC (CT-006)'), 'marcador de inicio do BLOCO-DESC ausente');
+  assert.ok(texto.includes('<!-- FIM BLOCO-DESC (CT-006) -->'), 'marcador de fim do BLOCO-DESC ausente');
+});
+
+test('templates compartilhados identicos entre gerar-visao e gerar-contexto e sincronizados com o boilerplate', () => {
+  const pares = ['product_vision-template.md', 'architecture-template.md'];
+  const diretorioTemplates = path.join(RAIZ_PROJETO, 'src', 'assets', 'boilerplate', 'templates');
+
+  for (const nome of pares) {
+    const visao = readFileSync(path.join(DIRETORIO_SKILLS, 'gerar-visao', 'assets', nome));
+    const contexto = readFileSync(path.join(DIRETORIO_SKILLS, 'gerar-contexto', 'assets', nome));
+    const canonicos = readFileSync(path.join(diretorioTemplates, nome));
+
+    assert.ok(visao.equals(contexto), `assets/${nome} difere entre gerar-visao e gerar-contexto`);
+    assert.ok(visao.equals(canonicos), `assets/${nome} da skill difere do template canonico do boilerplate`);
+  }
+
+  const techspecAsset = readFileSync(path.join(DIRETORIO_SKILLS, 'gerar-techspec', 'assets', 'techspec-template.md'));
+  const techspecCanonico = readFileSync(path.join(diretorioTemplates, 'techspec-template.md'));
+  assert.ok(techspecAsset.equals(techspecCanonico), 'assets/techspec-template.md difere do template canonico');
+
+  for (const nome of ['task-template.md', 'tasks-template.md']) {
+    const asset = readFileSync(path.join(DIRETORIO_SKILLS, 'gerar-tasks', 'assets', nome));
+    const canonico = readFileSync(path.join(diretorioTemplates, nome));
+    assert.ok(asset.equals(canonico), `assets/${nome} difere do template canonico`);
+  }
+});
+
+test('SKILL.md das skills convertidas tem menos de 500 linhas e padrao critical no topo e rodape', () => {
+  const skillsConvertidas = ['gerar-techspec', 'gerar-tasks', 'gerar-visao', 'gerar-contexto'];
+
+  for (const skill of skillsConvertidas) {
+    const conteudo = readFileSync(path.join(DIRETORIO_SKILLS, skill, 'SKILL.md'), 'utf-8');
+    const totalLinhas = conteudo.split(/\r?\n/).length;
+
+    assert.ok(totalLinhas < 500, `skill ${skill}: SKILL.md com ${totalLinhas} linhas (limite 500)`);
+    assert.equal(
+      conteudo.split('</critical>').length - 1,
+      2,
+      `skill ${skill}: SKILL.md deveria ter bloco critical no topo e no rodape`
+    );
+  }
+});
+
+test('referencias com mais de 100 linhas possuem sumario', () => {
+  const skillsConvertidas = ['gerar-techspec', 'gerar-tasks', 'gerar-visao', 'gerar-contexto'];
+
+  for (const skill of skillsConvertidas) {
+    const diretorioReferences = path.join(DIRETORIO_SKILLS, skill, 'references');
+
+    for (const nome of readdirSync(diretorioReferences)) {
+      const conteudo = readFileSync(path.join(diretorioReferences, nome), 'utf-8');
+      const totalLinhas = conteudo.split(/\r?\n/).length;
+
+      if (totalLinhas > 100) {
+        assert.ok(
+          conteudo.includes('## Sumário') || conteudo.includes('## Sumario'),
+          `skill ${skill}: references/${nome} com ${totalLinhas} linhas deveria ter sumario`
+        );
+      }
+    }
+  }
+});
+
+test('validador do gerar-techspec aprova techspec conforme', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-techspec-ok-'));
+
+  try {
+    const alvo = path.join(diretorio, 'techspec.md');
+    writeFileSync(alvo, TECHSPEC_CONFORME);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-techspec', 'scripts', 'validar-techspec.mjs');
+    const resultado = executarValidador(script, alvo);
+
+    assert.equal(resultado.codigo, 0, `saida: ${resultado.saida}`);
+    assert.ok(resultado.saida.includes('OK'), 'resumo de sucesso deveria conter OK');
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-techspec rejeita techspec com violacoes conhecidas', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-techspec-erro-'));
+
+  try {
+    const alvo = path.join(diretorio, 'techspec.md');
+    writeFileSync(alvo, TECHSPEC_COM_VIOLACOES);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-techspec', 'scripts', 'validar-techspec.mjs');
+    const resultado = executarValidador(script, alvo);
+
+    assert.equal(resultado.codigo, 1, 'techspec com violacoes deveria ser rejeitado');
+
+    const esperados = [
+      '{{',
+      '## 9.',
+      'comentário de autoria',
+      'origem válida',
+      'Como Obtido'
+    ];
+
+    for (const esperado of esperados) {
+      assert.ok(resultado.saida.includes(esperado), `saida deveria mencionar: ${esperado}`);
+    }
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-tasks aprova conjunto de tasks conforme', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-tasks-ok-'));
+
+  try {
+    const techspec = path.join(diretorio, 'techspec.md');
+    const tasksMd = path.join(diretorio, 'tasks.md');
+    const task1 = path.join(diretorio, 'task-1.md');
+    const task2 = path.join(diretorio, 'task-2.md');
+    writeFileSync(techspec, TECHSPEC_PARA_TASKS);
+    writeFileSync(tasksMd, TASKS_MD_CONFORME);
+    writeFileSync(task1, TASK_1_CONFORME);
+    writeFileSync(task2, TASK_2_CONFORME);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-tasks', 'scripts', 'validar-tasks.mjs');
+    const resultado = executarValidador(script, techspec, tasksMd, task1, task2);
+
+    assert.equal(resultado.codigo, 0, `saida: ${resultado.saida}`);
+    assert.ok(resultado.saida.includes('OK'), 'resumo de sucesso deveria conter OK');
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-tasks rejeita conjunto com violacoes conhecidas', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-tasks-erro-'));
+
+  try {
+    const techspec = path.join(diretorio, 'techspec.md');
+    const tasksMd = path.join(diretorio, 'tasks.md');
+    const task1 = path.join(diretorio, 'task-1.md');
+    writeFileSync(techspec, TECHSPEC_PARA_TASKS_VIOLACAO);
+    writeFileSync(tasksMd, TASKS_MD_COM_VIOLACOES);
+    writeFileSync(task1, TASK_1_COM_VIOLACOES);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-tasks', 'scripts', 'validar-tasks.mjs');
+    const resultado = executarValidador(script, techspec, tasksMd, task1);
+
+    assert.equal(resultado.codigo, 1, 'conjunto com violacoes deveria ser rejeitado');
+
+    const esperados = [
+      'CT-003',
+      'task-3.md',
+      'mistura camadas',
+      'cinco campos',
+      '{{',
+      'comentário de autoria'
+    ];
+
+    for (const esperado of esperados) {
+      assert.ok(resultado.saida.includes(esperado), `saida deveria mencionar: ${esperado}`);
+    }
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-visao aprova artefatos conformes', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-visao-ok-'));
+
+  try {
+    const visao = path.join(diretorio, 'product_vision.md');
+    const arquitetura = path.join(diretorio, 'architecture.md');
+    writeFileSync(visao, PRODUCT_VISION_CONFORME);
+    writeFileSync(arquitetura, ARCHITECTURE_CONFORME);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-visao', 'scripts', 'validar-visao.mjs');
+    const resultado = executarValidador(script, visao, arquitetura, 'HIGH');
+
+    assert.equal(resultado.codigo, 0, `saida: ${resultado.saida}`);
+    assert.ok(resultado.saida.includes('OK'), 'resumo de sucesso deveria conter OK');
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-visao rejeita artefatos com violacoes conhecidas', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-visao-erro-'));
+
+  try {
+    const visao = path.join(diretorio, 'product_vision.md');
+    const arquitetura = path.join(diretorio, 'architecture.md');
+    writeFileSync(visao, PRODUCT_VISION_COM_VIOLACOES);
+    writeFileSync(arquitetura, ARCHITECTURE_COM_VIOLACOES);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-visao', 'scripts', 'validar-visao.mjs');
+    const resultado = executarValidador(script, visao, arquitetura, 'COMPREHENSIVE');
+
+    assert.equal(resultado.codigo, 1, 'artefatos com violacoes deveriam ser rejeitados');
+
+    const esperados = [
+      '{{',
+      '## 9.',
+      'react',
+      'comentário de autoria',
+      'persona',
+      '## 4.'
+    ];
+
+    for (const esperado of esperados) {
+      assert.ok(resultado.saida.includes(esperado), `saida deveria mencionar: ${esperado}`);
+    }
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-contexto aprova artefatos conformes', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-contexto-ok-'));
+
+  try {
+    const arquitetura = path.join(diretorio, 'architecture.md');
+    const visao = path.join(diretorio, 'product_vision.md');
+    writeFileSync(arquitetura, ARCHITECTURE_CONTEXTO_CONFORME);
+    writeFileSync(visao, PRODUCT_VISION_CONTEXTO_CONFORME);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-contexto', 'scripts', 'validar-contexto.mjs');
+    const resultado = executarValidador(script, arquitetura, visao);
+
+    assert.equal(resultado.codigo, 0, `saida: ${resultado.saida}`);
+    assert.ok(resultado.saida.includes('OK'), 'resumo de sucesso deveria conter OK');
+  } finally {
+    rmSync(diretorio, { recursive: true, force: true });
+  }
+});
+
+test('validador do gerar-contexto rejeita artefatos com violacoes conhecidas', () => {
+  const diretorio = mkdtempSync(path.join(tmpdir(), 'validar-contexto-erro-'));
+
+  try {
+    const arquitetura = path.join(diretorio, 'architecture.md');
+    const visao = path.join(diretorio, 'product_vision.md');
+    writeFileSync(arquitetura, ARCHITECTURE_CONTEXTO_COM_VIOLACOES);
+    writeFileSync(visao, PRODUCT_VISION_CONTEXTO_COM_VIOLACOES);
+
+    const script = path.join(DIRETORIO_SKILLS, 'gerar-contexto', 'scripts', 'validar-contexto.mjs');
+    const resultado = executarValidador(script, arquitetura, visao);
+
+    assert.equal(resultado.codigo, 1, 'artefatos com violacoes deveriam ser rejeitados');
+
+    const esperados = [
+      'Domínio Inferido',
+      '[REVISAR]',
+      'persona',
+      'postgresql',
+      '## 10',
+      '{{'
     ];
 
     for (const esperado of esperados) {
