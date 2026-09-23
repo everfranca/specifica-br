@@ -9,7 +9,7 @@
 
 Ferramenta de linha de comando que automatiza o workflow de Spec Driven Development (SDD) com IA, do contexto do produto até a execução das tarefas. É para times e pessoas que desenvolvem com assistentes de IA e querem especificação antes de código, com todos os artefatos em português brasileiro.
 
-O `specifica-br` instala os comandos e as skills SDD na sua ferramenta de IA — OpenCode, ClaudeCode, Cursor, Gemini CLI ou Kiro — e executa as tarefas geradas em lote.
+O `specifica-br` instala os comandos e as skills SDD na sua ferramenta de IA — OpenCode, ClaudeCode, Cursor, Gemini CLI, Kiro ou Codex — e executa as tarefas geradas em lote.
 
 ## O que é SDD
 
@@ -27,13 +27,13 @@ npm install -g specifica-br
 specifica-br init
 ```
 
-O `init` instala os comandos e as skills no diretório global da sua ferramenta de IA — uma vez por máquina — e cria os templates em `specs/templates/` no projeto atual.
+O `init` instala os 7 comandos e as 8 skills no diretório global da sua ferramenta de IA — uma vez por máquina. Os templates ficam embutidos nas próprias skills; use `init --templates` para copiá-los também em `specs/templates/` do projeto.
 
 Com isso, o workflow SDD tem sete passos:
 
 | Passo | Comando | Resultado |
 |:---|:---|:---|
-| 1. Inicialização | `specifica-br init` | Comandos, skills e templates instalados |
+| 1. Inicialização | `specifica-br init` | Comandos e skills instalados (`--templates` copia os templates) |
 | 2. Contexto | `/gerar-visao` (projeto novo) ou `/gerar-contexto` (projeto existente) | `specs/core/product_vision.md` e `specs/core/architecture.md` |
 | 3. PRD | `/gerar-prd` | Requisitos funcionais e regras de negócio |
 | 4. Tech Spec | `/gerar-techspec` | Arquitetura, componentes e plano técnico |
@@ -48,18 +48,18 @@ Usage:
   specifica-br [options] [command]
 
 Commands:
-  init              Instala comandos e skills SDD no diretório global (--local para o projeto)
+  init              Instala comandos e skills SDD no diretório global (--local para o projeto, --templates para copiar templates)
   executar-tasks    Executa em lote os task-*.md de uma feature
   config            Exibe e altera o layout e a ferramenta de IA
   help [command]    display help for command
-  upgrade           Atualiza templates e comandos (em breve)
+  upgrade           Atualiza a CLI para a versão mais recente do npm
 ```
 
 ## Comandos da CLI
 
 | Comando | Descrição |
 |:---|:---|
-| `specifica-br init` | Instala comandos e skills no diretório global da ferramenta de IA e cria os templates no projeto. `--local` instala tudo dentro do projeto. |
+| `specifica-br init` | Instala comandos e skills no diretório global da ferramenta de IA. `--local` instala tudo dentro do projeto. `--templates` copia também os 7 templates para `specs/templates/` (o template do projeto prevalece sobre o da skill). |
 | `specifica-br executar-tasks <diretório>` | Executa em lote os `task-*.md` de uma feature, na ordem numérica, pulando as que já estão `DONE`. Possui mais de vinte opções de modelo, orçamento, permissão e contexto. |
 | `specifica-br config` | Exibe e altera o layout de exibição e a ferramenta de IA registrada para o projeto. |
 | `specifica-br upgrade` | Atualiza a CLI para a versão mais recente do npm. |

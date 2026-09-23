@@ -222,6 +222,38 @@ test('Grupo B aceita o comando instalado apenas no escopo global', async () => {
   );
 });
 
+test('Grupo B aceita executar-task como skill quando o comando nao existe', async () => {
+  await cenarioFeliz();
+  await fs.remove(path.join(projetoDir, '.claude', 'commands'));
+  await fs.ensureDir(path.join(projetoDir, '.claude', 'skills', 'executar-task'));
+  await fs.writeFile(path.join(projetoDir, '.claude', 'skills', 'executar-task', 'SKILL.md'), '# skill');
+
+  const runner = fakeRunner({ claude: '/usr/bin/claude' });
+  const resultado = await servico(runner, fakeAdapter(), fakeFileService()).run(contexto());
+
+  const item = resultado.itens.find((i) => i.item === 'comando-executar-task');
+  assert.strictEqual(item?.severidade, 'OK');
+  assert.ok(
+    item?.mensagem.includes('disponivel via skill') && item.mensagem.includes('executar-task'),
+    `mensagem deveria citar a skill: ${item?.mensagem}`
+  );
+});
+
+test('Grupo B aceita executar-task como skill apenas no escopo global', async () => {
+  await cenarioFeliz();
+  await fs.remove(path.join(projetoDir, '.claude', 'commands'));
+  await fs.ensureDir(path.join(homeDir, '.claude', 'skills', 'executar-task'));
+  await fs.writeFile(path.join(homeDir, '.claude', 'skills', 'executar-task', 'SKILL.md'), '# skill');
+
+  const runner = fakeRunner({ claude: '/usr/bin/claude' });
+  const resultado = await servico(runner, fakeAdapter(), fakeFileService()).run(contexto());
+
+  assert.strictEqual(
+    resultado.itens.find((i) => i.item === 'comando-executar-task')?.severidade,
+    'OK'
+  );
+});
+
 test('run nao escreve em stdout nem em stderr', async () => {
   await cenarioFeliz();
   const outW = process.stdout.write;

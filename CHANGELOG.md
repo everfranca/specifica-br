@@ -3,6 +3,41 @@
 Todas as mudanças relevantes deste projeto são registradas aqui, da versão mais recente para a mais
 antiga.
 
+## 1.12.0
+
+### Comandos convertidos em skills
+
+* Os fluxos `gerar-prd`, `gerar-techspec`, `gerar-tasks`, `gerar-visao`, `gerar-contexto` e
+  `realizar-codereview` passam a viver em `skills/` como fonte única (`SKILL.md` + `assets/` +
+  `scripts/validar-*.mjs` + `references/`). Os arquivos em `commands/` viram dispatchers finos
+  regenerados em build time por `scripts/gerar-dispatchers.mjs`; o build falha se o dispatcher
+  commitado divergir da skill.
+* `executar-task` permanece comando integral, sem skill correspondente, por exigência do
+  `opencode run --command` e do preflight do lote.
+* Templates embutidos nos `assets/` de cada skill. `specs/templates/` no projeto passa a ser
+  opt-in via `specifica-br init --local --templates`; o template do projeto, quando existe,
+  prevalece sobre o da skill. Projetos legados continuam funcionando.
+
+### Inicialização e ferramentas
+
+* Nova opção `init --templates` para copiar os 7 templates para `specs/templates/` do projeto.
+* Novo mapeamento da ferramenta `Codex` (apenas skills em `~/.agents/skills/`, sem diretório
+  global de comandos). `Gemini CLI`, `OpenCode` e `Codex` compartilham `~/.agents/skills/`
+  em uma única gravação.
+* Preflight do lote (grupo B) aceita `skills/executar-task/SKILL.md` como candidato, mantendo
+  `commands/executar-task.md` como forma primária.
+* `help` atualizado com `Codex`, `--templates` e descrição atual do `upgrade`.
+
+### Build
+
+* `npm run build` passa a rodar `node scripts/gerar-dispatchers.mjs` antes de copiar os assets.
+* `add:shebang` passa a usar `node scripts/adicionar-shebang.mjs` em vez de `sed`, com
+  comportamento idêntico no Linux, macOS e Windows.
+
+## 1.11.0
+
+* Melhorias visuais na sessão de configurações.
+
 ## 1.10.0
 
 ### Quebras de compatibilidade

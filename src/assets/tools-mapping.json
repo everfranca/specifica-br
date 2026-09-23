@@ -49,5 +49,13 @@
       "commands": { "base": "config", "path": "opencode/command/" },
       "skills": { "base": "home", "path": ".agents/skills/" }
     }
+  },
+  {
+    "name": "Codex",
+    "skills": ".agents/skills/",
+    "templates": "specs/templates/",
+    "global": {
+      "skills": { "base": "home", "path": ".agents/skills/" }
+    }
   }
 ]

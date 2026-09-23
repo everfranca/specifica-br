@@ -14,6 +14,7 @@ import { updateNotifierMiddleware } from '../utils/update-notifier-middleware.js
 
 interface InitOptions {
   local?: boolean;
+  templates?: boolean;
 }
 
 async function runInitCommand(options: InitOptions = {}): Promise<void> {
@@ -67,7 +68,7 @@ async function runInitCommand(options: InitOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    const targets = fileService.resolveTargets(selectedTools, scope);
+    const targets = fileService.resolveTargets(selectedTools, scope, Boolean(options.templates));
 
     console.log('');
     showInfoMessage(
@@ -78,8 +79,9 @@ async function runInitCommand(options: InitOptions = {}): Promise<void> {
     showTargetsPreview(targets);
     console.log('');
 
-    if (scope === 'global') {
-      console.log('  Os templates continuam no projeto, em specs/templates/.');
+    if (!options.templates) {
+      console.log('  Os templates ficam dentro das próprias skills (em assets/).');
+      console.log('  Use --templates para copiá-los também em specs/templates/ do projeto.');
       console.log('');
     }
 
@@ -98,7 +100,7 @@ async function runInitCommand(options: InitOptions = {}): Promise<void> {
     console.log('');
     showInfoMessage('Criando estrutura de diretórios...');
 
-    const copyResult = await fileService.createStructure(selectedTools, scope);
+    const copyResult = await fileService.createStructure(selectedTools, scope, Boolean(options.templates));
 
     // Com a instalacao global, copias antigas dentro do projeto viram duplicatas.
     // Varremos os diretorios de todas as ferramentas e removemos so o que e nosso.
@@ -150,4 +152,5 @@ async function wrappedRunInitCommand(options: InitOptions): Promise<void> {
 export const initCommand = new Command('init')
   .description('Instala comandos e skills SDD no diretório global da ferramenta de IA')
   .option('--local', 'Instala comandos e skills no projeto atual em vez do diretório global')
+  .option('--templates', 'Copia também os templates para specs/templates/ do projeto (opt-in)')
   .action(wrappedRunInitCommand);
