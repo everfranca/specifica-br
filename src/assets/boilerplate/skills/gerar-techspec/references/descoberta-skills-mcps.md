@@ -26,7 +26,7 @@
 | OpenCode | `~/.agents/skills/`, `$XDG_CONFIG_HOME/opencode/opencode.json` (padrao `~/.config/opencode/opencode.json`) | `%USERPROFILE%\.agents\skills\`, `%APPDATA%\opencode\opencode.json` |
 | Codex | `~/.agents/skills/`, `~/.codex/config.toml` | `%USERPROFILE%\.agents\skills\`, `%USERPROFILE%\.codex\config.toml` |
 
-**Fonte adicional obrigatoria:** alem dos caminhos acima, considere o inventario de skills e de ferramentas MCP ja exposto a sessao pela ferramenta em uso. Itens encontrados por ambas as fontes sao registrados uma unica vez.
+**Ordem de fontes (obrigatoria):** a fonte PRIMARIA e o inventario de skills e de ferramentas MCP ja exposto a sessao pela ferramenta em uso (ex.: a listagem de skills disponiveis da sessao). Somente itens nao cobertos por ele sao buscados nos caminhos das tabelas acima; a busca em filesystem restringe-se EXATAMENTE a esses caminhos, consultados um a um, e e PROIBIDO varrer o sistema de arquivos ou executar glob a partir da raiz (`/` ou equivalente). Itens encontrados por ambas as fontes sao registrados uma unica vez.
 
 **Campos obrigatorios por item encontrado:** nome, tipo (SKILL ou MCP), origem (PROJETO ou GLOBAL) e descricao/finalidade.
 

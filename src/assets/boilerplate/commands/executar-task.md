@@ -87,9 +87,19 @@ argument-hint: "[caminho do task-N.md] [contexto adicional]"
     MCPs (formato anterior). A execução prosseguirá sem declaração.", registre para a
     seção 8 e siga para o PASSO 2.
   - Se a seção declarar ausência de itens, siga para o PASSO 2 sem carregamento.
-  - Para cada item declarado: `Tipo` SKILL - leia-a INTEGRALMENTE e incorpore ao
-    contexto (AUTORIZADO mesmo fora da seção 5); `Tipo` MCP - verifique a
-    disponibilidade do servidor e de suas ferramentas.
+  - Para cada item declarado: `Tipo` SKILL - carregue-a INTEGRALMENTE pela
+    ferramenta de skills da sessão (quando existir) e incorpore ao contexto
+    (AUTORIZADO mesmo fora da seção 5); `Tipo` MCP - verifique a disponibilidade
+    do servidor e de suas ferramentas.
+  - Sem ferramenta de skills na sessão, leia o SKILL.md de cada skill no
+    primeiro destes caminhos que existir, nesta ordem:
+    `.agents/skills/[nome]/SKILL.md`, `.claude/skills/[nome]/SKILL.md`,
+    `.cursor/skills/[nome]/SKILL.md`, `.kiro/skills/[nome]/SKILL.md` (projeto) e
+    `~/.agents/skills/[nome]/SKILL.md`, `~/.claude/skills/[nome]/SKILL.md`,
+    `~/.cursor/skills/[nome]/SKILL.md`, `~/.kiro/skills/[nome]/SKILL.md`
+    (usuário).
+  - PROIBIDO procurar skill com busca ou glob pelo sistema de arquivos: use a
+    ferramenta de skills da sessão ou apenas os caminhos listados acima.
   - Indisponibilidade NUNCA aborta. Item indisponível, ou MCP configurado mas não
     conectado: informe "Skill/MCP [nome] não está disponível neste ambiente. A execução
     prosseguirá sem ele.", registre INDISPONIVEL e prossiga.
