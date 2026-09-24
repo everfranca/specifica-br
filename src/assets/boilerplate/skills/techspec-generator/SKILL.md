@@ -1,6 +1,6 @@
 ---
 name: techspec-generator
-description: Gerador de Especificacoes Tecnicas (Tech Specs) com expertise completa de Tech Lead, Arquiteto de Software, DBA, DevOps, Security Engineer e UI/UX Developer. Use esta skill SEMPRE quando o usuario solicitar criacao, refinamento ou analise de especificacoes tecnicas, tech specs, design de componentes, modelagem de dados, decisoes arquiteturais ou qualquer tarefa relacionada a definicao tecnica de software. Esta skill e obrigatoria para o comando /gerar-techspec e deve ser usada sempre que houver trabalho envolvendo especificacao tecnica, design de API, modelagem de banco de dados, decisao arquitetural, estrategia de testes, planejamento de infraestrutura ou revisao de viabilidade tecnica.
+description: Gerador de Especificacoes Tecnicas (Tech Specs) com expertise completa de Tech Lead, Arquiteto de Software, DBA, DevOps, Security Engineer e UI/UX Developer. Use esta skill SEMPRE quando o usuario solicitar criacao, refinamento ou analise de especificacoes tecnicas, tech specs, design de componentes, modelagem de dados, decisoes arquiteturais ou qualquer tarefa relacionada a definicao tecnica de software. Esta skill e a camada de expertise complementar da skill gerar-techspec e deve ser usada sempre que houver trabalho envolvendo especificacao tecnica, design de API, modelagem de banco de dados, decisao arquitetural, estrategia de testes, planejamento de infraestrutura ou revisao de viabilidade tecnica.
 ---
 
 # Skill: TechSpec Generator
@@ -14,8 +14,8 @@ Esta skill fornece todas as habilidades necessárias para traduzir requisitos de
 ### 1.1. Contexto no Workflow SDD (Spec Driven Development)
 
 Esta skill é parte central do workflow de desenvolvimento orientado a especificações. Ela se integra com:
-- **Comando:** `/gerar-techspec` - usa esta skill obrigatoriamente
-- **Template:** `@specs/templates/techspec-template.md` - estrutura da TechSpec gerada
+- **Skill irmã:** `gerar-techspec` - conduz o processo de geração; esta skill aporta a expertise de cada decisão
+- **Template:** controlado pela skill `gerar-techspec` (prevalece `specs/templates/techspec-template.md` do projeto, quando existir)
 - **Contexto obrigatório:** `README.md`, `AGENTS.md`, código existente
 - **Contexto opcional:** `specs/core/architecture.md` - arquitetura global do projeto
 - **Entrada:** `./specs/features/[feature]/prd.md` - PRD aprovado
@@ -347,11 +347,11 @@ Level: ERROR | When: Falha pagamento | Context: { orderId, errorCode, correlatio
 **Regra de implementabilidade:**
 Se um desenvolvedor júnior não conseguir implementar a feature lendo apenas a TechSpec, ela precisa de mais detalhes.
 
-## 3. Integração com o Comando `gerar-techspec.md`
+## 3. Integração com a Skill `gerar-techspec`
 
-O comando define 6 passos obrigatórios. A skill se integra em cada passo:
+A skill `gerar-techspec` define 6 passos obrigatórios. Esta skill se integra em cada passo:
 
-| Passo do Comando | Habilidades da Skill |
+| Passo da Skill | Habilidades desta Skill |
 |:---|:---|
 | **Passo 0:** Arquitetura Global | 2.2 (Design Arquitetural) |
 | **Passo 1:** Contexto e Padrões | 2.8 (Prog. Sênior), 2.15 (Comunicação) |

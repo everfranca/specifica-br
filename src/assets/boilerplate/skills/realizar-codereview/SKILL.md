@@ -25,13 +25,22 @@ Atue como um **Tech Lead Sênior e Code Reviewer Especialista**. Sua responsabil
 
 ## 2. Recursos e Precedência de Template (BLOQUEANTE)
 
-- **Template do Relatório**: se `specs/templates/codereview-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/codereview-template.md` desta skill.
+- **Template do Relatório**: se `specs/templates/codereview-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/codereview-template.md` desta skill.
 - **Contexto do Projeto**: `AGENTS.md` (para validar padrões).
 - **Especificações (opcional)**: PRD e TechSpec da feature, se disponíveis.
 - **Código a Analisar**: definido pelo escopo (branch, arquivo, flow, all).
 - **Context7**: use para documentação de frameworks/bibliotecas quando necessário.
 
 Antes de gerar o relatório, você DEVE ler o template efetivo (o do projeto ou o da skill). Gerar sem ler o template invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 ## 3. Protocolo de Execução (Passos Obrigatórios)
 
@@ -190,7 +199,7 @@ O veredito DEVE incluir:
 Após gerar o relatório, execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-codereview.mjs <caminho-do-relatorio>
+node {{SKILL_DIR}}/scripts/validar-codereview.mjs <caminho-do-relatorio>
 ```
 
 O validador confere deterministicamente: zero placeholders residuais, todas as seções do template presentes, todo finding [F-XXX] com localização arquivo:linha e severidade rotulada, e veredito com status + justificativa + pré-condições.

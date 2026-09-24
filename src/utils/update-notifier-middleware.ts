@@ -199,7 +199,9 @@ class UpdateNotifierMiddleware {
 
       // Exibir mensagem de sucesso
       console.log('specifica-br atualizado com sucesso!');
-      
+      console.log('Os artefatos instalados (comandos e skills) não são atualizados automaticamente.');
+      console.log('Execute "specifica-br init" para sincronizá-los; qualquer modificação manual nesses arquivos será sobreposta.');
+
       // Encerrar processo após atualização bem-sucedida
       process.exit(0);
     } catch (error) {

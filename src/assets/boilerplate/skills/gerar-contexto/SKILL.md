@@ -29,13 +29,22 @@ Atue como **Engenheiro de Software Sênior e Arquiteto de Software**.
 
 ## 2. Recursos e Precedência de Templates (BLOQUEANTE)
 
-- **Template Arquitetura:** se `specs/templates/architecture-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/architecture-template.md` desta skill.
-- **Template Visão de Produto:** se `specs/templates/product_vision-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/product_vision-template.md` desta skill.
+- **Template Arquitetura:** se `specs/templates/architecture-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/architecture-template.md` desta skill.
+- **Template Visão de Produto:** se `specs/templates/product_vision-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/product_vision-template.md` desta skill.
 - **Destino Arquitetura:** `./specs/core/architecture.md`
 - **Destino Visão:** `./specs/core/product_vision.md`
 - **Context7:** use para documentação de frameworks quando necessário.
 
 Antes de gerar cada artefato, você DEVE ler o template efetivo (o do projeto ou o da skill). Gerar sem ler o template invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 **Nota de sincronização:** os dois templates em `assets/` são compartilhados, byte a byte, com a skill `gerar-visao`. Qualquer alteração neles DEVE ser replicada nos equivalentes da skill irmã.
 
@@ -102,7 +111,7 @@ Leia a seção 3 de `references/inferencia-dominio.md` (Clarificação de itens 
 Após salvar ambos os arquivos (e após cada regeneração), execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-contexto.mjs specs/core/architecture.md specs/core/product_vision.md
+node {{SKILL_DIR}}/scripts/validar-contexto.mjs specs/core/architecture.md specs/core/product_vision.md
 ```
 
 O validador confere deterministicamente: zero placeholders residuais, zero comentários de autoria, zero tags [REVISAR] remanescentes no architecture.md, seções obrigatórias (Paradigma e Stack; Integrações Externas, Maturidade de Testes e Domínio Inferido por nome; visão 1 a 9 + seção 10 de Inferências), e zero contaminação cruzada (termos técnicos na visão fora da seção 10; termos de negócio na arquitetura — listas configuráveis no script).

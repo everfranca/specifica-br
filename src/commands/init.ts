@@ -17,8 +17,7 @@ interface InitOptions {
   templates?: boolean;
 }
 
-async function runInitCommand(options: InitOptions = {}): Promise<void> {
-  const scope: InstallScope = options.local ? 'local' : 'global';
+export async function runInitCommand(options: InitOptions = {}): Promise<void> {  const scope: InstallScope = options.local ? 'local' : 'global';
 
   console.log('');
   console.log('Inicializando estrutura Spec Driven Development...');

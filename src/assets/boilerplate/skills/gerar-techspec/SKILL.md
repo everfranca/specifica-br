@@ -39,13 +39,22 @@ Toda decisão deve ser:
 
 ## 2. Recursos e Precedência de Template (BLOQUEANTE)
 
-- **Template da Tech Spec:** se `specs/templates/techspec-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/techspec-template.md` desta skill.
+- **Template da Tech Spec:** se `specs/templates/techspec-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/techspec-template.md` desta skill.
 - **Contexto:** `README.md`, `AGENTS.md`, `specs/core/architecture.md` (se existir)
 - **Entrada:** `./specs/features/[nome-da-funcionalidade]/prd.md`
 - **Saída:** `./specs/features/[nome-da-funcionalidade]/techspec.md`
 - **Skills e MCPs:** inventário levantado no PASSO 3.5
 
 Antes de gerar, você DEVE ler o template efetivo (o do projeto ou o da skill). Gerar a Tech Spec sem ler o template invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 ## 3. Protocolo de Execução (6 Passos)
 
@@ -153,7 +162,7 @@ Este é o **Gate de Qualidade único** da skill. Os Passos 3 e 6 referenciam est
 Após salvar o `techspec.md`, execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-techspec.mjs specs/features/[nome-da-funcionalidade]/techspec.md
+node {{SKILL_DIR}}/scripts/validar-techspec.mjs specs/features/[nome-da-funcionalidade]/techspec.md
 ```
 
 O validador confere deterministicamente: zero placeholders residuais, seções obrigatórias 1 a 9 presentes, zero comentários de autoria (exceto a metadata de status), origem preenchida (DESCOBERTO/SOLICITADO/PROPOSTO) em toda linha da Tabela Resumo de Contratos e em todo campo `Como Obtido`, e seção 9 preenchida (itens ou variante de ausência).

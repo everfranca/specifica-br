@@ -7,6 +7,7 @@ import { helpCommand } from './commands/help.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { executarTasksCommand } from './commands/executar-tasks.js';
 import { configCommand } from './commands/config.js';
+import { onboardingService } from './utils/onboarding-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(
@@ -25,6 +26,13 @@ program.addCommand(helpCommand);
 program.addCommand(upgradeCommand);
 program.addCommand(executarTasksCommand);
 program.addCommand(configCommand);
+
+const COMANDOS_COM_FLUXO_PROPRIO = ['init', 'upgrade'];
+const primeiroArgumento = process.argv[2] ?? '';
+
+if (!COMANDOS_COM_FLUXO_PROPRIO.includes(primeiroArgumento) && !primeiroArgumento.startsWith('-')) {
+  await onboardingService.garantirOnboardingSeNecessario();
+}
 
 // parseAsync (nao parse): as acoes de executar-tasks e config sao assincronas de
 // ponta a ponta e parse() encerraria o processo antes do fim do lote.

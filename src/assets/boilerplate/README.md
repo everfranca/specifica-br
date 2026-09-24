@@ -26,7 +26,7 @@ Regras de autoria:
 - `SKILL.md` com menos de 500 linhas; frontmatter apenas com `name` (igual ao nome do diretório, minúsculas e hífens) e `description` (terceira pessoa, com gatilhos de uso).
 - Referências de no máximo 1 nível de profundidade: o SKILL.md aponta direto para o arquivo; nunca arquivo apontando para arquivo.
 - Scripts são sempre invocados como `node scripts/nome-do-script.mjs`: sem shebang, sem chmod, sem dependências externas ou de sistema operacional (funcionam em Linux, macOS e Windows).
-- Caminhos internos da skill sempre relativos à própria skill e com barras normais (ex.: `assets/prd-template.md`).
+- Caminhos internos da skill usam o token `{{SKILL_DIR}}` (ex.: `{{SKILL_DIR}}/assets/prd-template.md`): a fonte commitada mantém o token e o `init` o substitui pelo caminho absoluto do diretório instalado, com barras normais. Cada skill com recursos declara também o bloco "Resolução do diretório da skill", com a ordem de fallback (base directory do carregador e busca pelo SKILL.md) para modelos que não resolvem caminhos relativos.
 
 ## Regra de precedência de templates
 

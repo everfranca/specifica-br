@@ -104,6 +104,9 @@ async function runUpgradeCommand(): Promise<void> {
     console.log('');
     console.log(chalk.green('✓ specifica-br atualizado com sucesso!'));
     console.log('');
+    console.log(chalk.yellow('Os artefatos instalados (comandos e skills) não são atualizados automaticamente.'));
+    console.log(chalk.yellow('Execute "specifica-br init" para sincronizá-los; qualquer modificação manual nesses arquivos será sobreposta.'));
+    console.log('');
   } catch (error) {
     if (error instanceof Error) {
       const errorMessage = error.message;

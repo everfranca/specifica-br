@@ -16,6 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const GLOBAL_BASES = ['home', 'config'];
 
+const TOKEN_SKILL_DIR = '{{SKILL_DIR}}';
+
 function isValidGlobalPath(value: unknown): value is GlobalPath {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -405,6 +407,7 @@ export class FileService {
 
     try {
       await fs.copy(sourceDir, destDir, { overwrite: true });
+      await this.carimbarCaminhoAbsolutoSkills(destDir);
 
       // Enumeramos a ORIGEM, nao o destino: diretorios globais compartilhados
       // (ex.: ~/.agents/skills/) costumam ter skills de terceiros que nao foram copiadas.
@@ -434,5 +437,105 @@ export class FileService {
     }
 
     return copiedFiles;
+  }
+
+  /**
+   * Substitui o token {{SKILL_DIR}} pelos caminhos absolutos de instalacao em
+   * todos os arquivos Markdown de cada skill copiada. Modelos de qualquer
+   * capacidade resolvem um caminho absoluto literal; o token so existe na
+   * fonte commitada, nunca no artefato instalado.
+   */
+  private async carimbarCaminhoAbsolutoSkills(destDir: string): Promise<void> {
+    const entries = await fs.readdir(destDir);
+
+    for (const entry of entries) {
+      const destSkillDir = path.join(destDir, entry);
+      const stat = await fs.stat(destSkillDir);
+
+      if (stat.isDirectory()) {
+        await this.substituirTokenSkillDir(destSkillDir, destSkillDir);
+      }
+    }
+  }
+
+  private async substituirTokenSkillDir(diretorio: string, diretorioSkill: string): Promise<void> {
+    const items = await fs.readdir(diretorio);
+
+    for (const item of items) {
+      const itemPath = path.join(diretorio, item);
+      const stat = await fs.stat(itemPath);
+
+      if (stat.isDirectory()) {
+        await this.substituirTokenSkillDir(itemPath, diretorioSkill);
+        continue;
+      }
+
+      if (!item.endsWith('.md')) {
+        continue;
+      }
+
+      const conteudo = await fs.readFile(itemPath, 'utf-8');
+
+      if (!conteudo.includes(TOKEN_SKILL_DIR)) {
+        continue;
+      }
+
+      const caminhoAbsoluto = diretorioSkill.split(path.sep).join('/');
+      await fs.writeFile(itemPath, conteudo.split(TOKEN_SKILL_DIR).join(caminhoAbsoluto), 'utf-8');
+      console.log(`✓ Caminho absoluto carimbado: ${path.relative(diretorioSkill, itemPath)}`);
+    }
+  }
+
+  /**
+   * Verdadeiro quando qualquer artefato do boilerplate (comando ou skill) existe
+   * nos diretorios globais ou do projeto corrente. Base do aviso de onboarding:
+   * sem artefatos, o init ainda nao foi executado nesta maquina/projeto.
+   */
+  async existeInstalacaoEmQualquerEscopo(tools: ToolMapping[]): Promise<boolean> {
+    const ownedCommands = await this.ownedEntries('commands');
+    const ownedSkills = await this.ownedEntries('skills');
+    const candidates = new Set<string>();
+
+    for (const tool of tools) {
+      for (const kind of ['commands', 'skills'] as const) {
+        const globalDir = this.resolveGlobalDir(tool, kind);
+
+        if (globalDir) {
+          candidates.add(globalDir);
+        }
+
+        const projectDir = this.resolveProjectDir(tool[kind]);
+
+        if (projectDir) {
+          candidates.add(projectDir);
+        }
+
+        if (kind === 'commands' && tool.legacyCommands) {
+          candidates.add(path.join(process.cwd(), tool.legacyCommands));
+        }
+      }
+    }
+
+    for (const dir of candidates) {
+      if (!(await fs.pathExists(dir))) {
+        continue;
+      }
+
+      let existing: string[];
+      try {
+        existing = await fs.readdir(dir);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'EACCES') {
+          continue;
+        }
+        throw error;
+      }
+
+      if (existing.some(entry => ownedCommands.has(entry) || ownedSkills.has(entry))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

@@ -80,9 +80,18 @@ Você é um **especialista em gerenciamento de projetos de software**. Cria list
 
 - **Entrada:** `PRD_PATH` = `./specs/features/[nome-da-funcionalidade]/prd.md`; `TECHSPEC_PATH` = `./specs/features/[nome-da-funcionalidade]/techspec.md`.
 - **Destino base de cada task:** `./specs/features/[nome-da-funcionalidade]/`; índice: `./specs/features/[nome-da-funcionalidade]/tasks.md`.
-- **Templates:** se `specs/templates/task-template.md` e/ou `specs/templates/tasks-template.md` existirem no projeto, eles PREVALEM; caso contrário, use `assets/task-template.md` e `assets/tasks-template.md` desta skill.
+- **Templates:** se `specs/templates/task-template.md` e/ou `specs/templates/tasks-template.md` existirem no projeto, eles PREVALEM; caso contrário, use `{{SKILL_DIR}}/assets/task-template.md` e `{{SKILL_DIR}}/assets/tasks-template.md` desta skill.
 
 Antes de gerar, você DEVE ler os templates efetivos (do projeto ou da skill). Gerar tasks sem ler os templates invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 ## 3. Fluxo de Execução (7 passos)
 
@@ -111,7 +120,7 @@ FILE_PATH: `./specs/features/[nome-da-funcionalidade]/tasks.md`
 Após gravar `tasks.md` e cada `task-N.md`, execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-tasks.mjs specs/features/[nome-da-funcionalidade]/techspec.md specs/features/[nome-da-funcionalidade]/tasks.md specs/features/[nome-da-funcionalidade]/task-1.md [task-2.md ...]
+node {{SKILL_DIR}}/scripts/validar-tasks.mjs specs/features/[nome-da-funcionalidade]/techspec.md specs/features/[nome-da-funcionalidade]/tasks.md specs/features/[nome-da-funcionalidade]/task-1.md [task-2.md ...]
 ```
 
 O validador confere deterministicamente, no plano materializado: todo `CT/ENV/SEC-XXX` da techspec mapeado em ao menos uma task, nenhuma task órfã (arquivo sem linha no índice ou linha sem arquivo), uma camada tecnológica por task (via interseção das camadas possíveis dos contratos declarados) e seção 9 de cada task com os cinco campos ou variante de ausência.

@@ -38,10 +38,19 @@ Toda sentença do PRD deve ser:
 
 ## 2. Recursos e Precedência de Template (BLOQUEANTE)
 
-- **Template do PRD**: se `specs/templates/prd-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/prd-template.md` desta skill.
+- **Template do PRD**: se `specs/templates/prd-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/prd-template.md` desta skill.
 - **Destino Base**: `./specs/features/[nome-da-funcionalidade]/`
 
 Antes de gerar, você DEVE ler o template efetivo (o do projeto ou o da skill). Gerar o PRD sem ler o template invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 ## 3. Protocolo de Execução (Fluxo Mandatório)
 
@@ -163,7 +172,7 @@ Posso aplicar essa correção automaticamente? (responda SIM)
 Após salvar o `prd.md`, execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-prd.mjs specs/features/[nome-da-funcionalidade]/prd.md
+node {{SKILL_DIR}}/scripts/validar-prd.mjs specs/features/[nome-da-funcionalidade]/prd.md
 ```
 
 O validador confere deterministicamente: zero placeholders residuais, presença das seções 1 a 8, zero comentários de autoria (exceto a metadata de status) e consistência cruzada US-XXX <-> RF-XXX.

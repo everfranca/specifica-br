@@ -35,12 +35,21 @@ Se você falar de técnica na Fase de Produto (frameworks, bancos, cloud) ou de 
 
 ## 2. Recursos e Precedência de Templates (BLOQUEANTE)
 
-- **Template Visão de Produto:** se `specs/templates/product_vision-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/product_vision-template.md` desta skill.
-- **Template Arquitetura:** se `specs/templates/architecture-template.md` existir no projeto, ele PREVALECE; caso contrário, use `assets/architecture-template.md` desta skill.
+- **Template Visão de Produto:** se `specs/templates/product_vision-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/product_vision-template.md` desta skill.
+- **Template Arquitetura:** se `specs/templates/architecture-template.md` existir no projeto, ele PREVALECE; caso contrário, use `{{SKILL_DIR}}/assets/architecture-template.md` desta skill.
 - **Destino Visão:** `./specs/core/product_vision.md`
 - **Destino Arquitetura:** `./specs/core/architecture.md`
 
 Antes de gerar cada artefato, você DEVE ler o template efetivo (o do projeto ou o da skill). Gerar sem ler o template invalida a execução.
+
+### Resolução do diretório da skill
+
+Os caminhos desta skill apontam para onde ela foi instalada. Se algum caminho de `assets/` ou `scripts/` falhar, resolva o diretório da skill nesta ordem antes de desistir:
+
+1. Diretório anunciado pelo carregador de skills da sessão (nota de base directory).
+2. Localização do `SKILL.md` desta skill por busca nos diretórios de skills do projeto e do usuário (padrão típico: `**/skills/<nome-da-skill>/SKILL.md`).
+
+Localizado o diretório, use-o como base para todos os templates (`assets/`) e validadores (`scripts/`). Sem localizar a skill, informe o usuário e não prossiga improvisando.
 
 **Nota de sincronização:** os dois templates em `assets/` são compartilhados, byte a byte, com a skill `gerar-contexto`. Qualquer alteração neles DEVE ser replicada nos equivalentes da skill irmã.
 
@@ -166,7 +175,7 @@ Coletar informações técnicas baseadas no nível escolhido, seguindo `referenc
 Após salvar ambos os arquivos, execute o validador da skill, sempre via `node`:
 
 ```
-node scripts/validar-visao.mjs specs/core/product_vision.md specs/core/architecture.md HIGH|MEDIUM|COMPREHENSIVE
+node {{SKILL_DIR}}/scripts/validar-visao.mjs specs/core/product_vision.md specs/core/architecture.md HIGH|MEDIUM|COMPREHENSIVE
 ```
 
 O validador confere deterministicamente, em cada artefato: zero placeholders residuais, zero comentários de autoria, seções obrigatórias conforme o nível de profundidade e zero contaminação cruzada (termos técnicos no product_vision.md, fora da seção 10; termos de negócio no architecture.md — listas configuráveis no script).
