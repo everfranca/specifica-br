@@ -974,8 +974,12 @@ export class TaskRunner {
     linhas.push(
       `  Tasks executadas   ${this.tasksExecutadas}`,
       `  Tasks com erro     ${this.tasksComErro}`,
-      `  Tokens totais      ${this.deps.accounting.formatMilhar(total.tokensGastosAcumulado)}`,
-      `  Raciocinio         ${
+      `  Tokens processados ${this.deps.accounting.formatMilhar(total.tokensGastosAcumulado)}`,
+      `    input novo       ${this.deps.accounting.formatMilhar(total.inputTokens)}`,
+      `    cache read       ${this.deps.accounting.formatMilhar(total.cacheReadInputTokens)}`,
+      `    cache write      ${this.deps.accounting.formatMilhar(total.cacheCreationInputTokens)}`,
+      `    output           ${this.deps.accounting.formatMilhar(total.outputTokens)}`,
+      `    raciocinio       ${
         this.deps.accounting.raciocinioReportado
           ? this.deps.accounting.formatMilhar(total.reasoningTokens)
           : 'nao reportado'
@@ -983,8 +987,8 @@ export class TaskRunner {
       `  Custo acumulado    $${this.deps.accounting.formatCustoExibicao(total.custoAcumuladoUsd)}`
     );
 
-    // CT-050: o consumo de uma construcao morta nao esta em `Tokens totais` nem
-    // em `Custo acumulado`, e nao ha como estima-lo. A linha existe para que o
+    // CT-050: o consumo de uma construcao morta nao esta em `Tokens processados`
+    // nem em `Custo acumulado`, e nao ha como estima-lo. A linha existe para que o
     // resumo nao afirme, por omissao, que o lote nao custou nada.
     const naoContabilizado = this.consumoNaoContabilizado();
     if (naoContabilizado > 0) {

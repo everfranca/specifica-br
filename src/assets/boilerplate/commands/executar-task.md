@@ -41,9 +41,11 @@ argument-hint: "[caminho do task-N.md] [contexto adicional]"
   Spec`). LEITURA DIRIGIDA: apenas as secoes da Tech Spec nomeadas em 2.2, 2.3 e 5.1 do
   TASK_FILE; PROIBIDO importar o arquivo inteiro. O mesmo vale para
   `specs/core/architecture.md`: apenas as secoes nomeadas na 5.1.
-  FALLBACK: se o TASK_FILE citar esses arquivos SEM nomear secao, ou a secao citada nao
-  existir, leia o arquivo completo e registre na secao 8 a referencia imprecisa. Na
-  duvida, leia de mais e registre. Motivo: as fontes somam 50k-70k tokens por turno.
+  FALLBACK: se o TASK_FILE citar esses arquivos SEM nomear secao, ou a secao citada
+  nao existir, extraia o mapa de secoes pela busca dos cabecalhos e leia apenas as
+  secoes pertinentes, registrando na secao 8 a referencia imprecisa. Ler o arquivo
+  completo e o ULTIMO recurso, permitido somente abaixo de 300 linhas. Motivo: as
+  fontes somam 50k-70k tokens por turno.
 
   5. PROJECT_RULES (Padrões do Projeto - AGENTS.md):
   {{content_of_agents_md}}
@@ -122,8 +124,12 @@ argument-hint: "[caminho do task-N.md] [contexto adicional]"
     declare a ausencia (PASSO 1.1) e prossiga com o melhor conhecimento. Item consultado
     e candidato a Evidencia da secao 8 (CARREGADO E UTILIZADO). PROIBIDO registrar
     credenciais, tokens ou chaves de servidores MCP.
-  - LEITURA POR RECORTE: acima de 400 linhas, localize o simbolo por busca e leia +/- 40
-    linhas. Ler o arquivo inteiro exige justificativa na secao 8.
+- LEITURA POR RECORTE: para ler qualquer arquivo de codigo, localize ANTES o simbolo
+  por busca e leia apenas a janela de +/- 40 linhas do resultado. Ler arquivo de
+  codigo inteiro, ou sem busca previa, e ANTI-PATTERN.
+- LEITURA INTEGRAL apenas de: TASK_FILE, CONTEXTO_DE_EXECUCAO, TASKS_FILE e arquivos
+  com menos de 100 linhas. Fora desses casos, exige justificativa registrada na
+  secao 8 ANTES de prosseguir; justificar depois nao valida.
   - EDICAO PONTUAL: altere apenas as linhas que mudam - reescrever o arquivo inteiro
     gasta o tamanho dele em tokens sem informacao nova. Excecao: arquivo com menos de
     100 linhas, ou mudanca que atinge a maior parte dele.
@@ -173,8 +179,10 @@ argument-hint: "[caminho do task-N.md] [contexto adicional]"
   - Segurança: nunca gerar segredos hardcoded nem registrar credenciais de MCP.
   - Consistência: a Spec tem prioridade sobre a Task; avise se houver conflito.
   - PROIBIDO gerar apenas texto explicativo ou declarar sucesso sem artefatos reais.
-  - PROIBIDO reler, sem motivo, um arquivo inalterado já no contexto desta execução
-    (reler é CORRETO quando o arquivo mudou desde a leitura anterior).
+    - PROIBIDO reler, sem motivo, um arquivo inalterado já no contexto desta execução
+      (reler é CORRETO quando o arquivo mudou desde a leitura anterior).
+    - PROIBIDO ler arquivo inteiro fora das excecoes do PASSO 3 sem justificativa
+      previa registrada na secao 8.
   **Se qualquer anti-pattern ocorrer, a execução é considerada inválida.**
   </regras_e_anti_patterns>
 
@@ -218,6 +226,6 @@ argument-hint: "[caminho do task-N.md] [contexto adicional]"
   - PARE ao atingir o limite de rodadas do PASSO 4.1 em vez de insistir.
   </critical>
 
-  **Command Version:** 0.8.0
+  **Command Version:** 0.9.0
 
 </system_instructions>
