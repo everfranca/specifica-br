@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc && node scripts/gerar-dispatchers.mjs && npm run copy:assets && npm run add:shebang",
-    "copy:assets": "npx copyfiles -u 2 \"src/assets/**/*\" dist && npx copyfiles -u 1 \"src/assets/tokens.json\" dist",
+    "copy:assets": "node scripts/copiar-assets.mjs",
     "add:shebang": "node scripts/adicionar-shebang.mjs",
     "start": "node dist/index.js",
     "dev": "tsc && npm run copy:assets && npm run add:shebang && node dist/index.js",
@@ -65,7 +65,6 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.2.3",
     "@types/semver": "^7.7.1",
-    "copyfiles": "^2.4.1",
     "typescript": "^5.3.3"
   }
 }

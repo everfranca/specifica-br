@@ -27,6 +27,9 @@ import type { HeaderStyle, LayoutName, ToolSlug } from '../dist/types/config.js'
 // Separador nominal deterministico nos cartoes: `detectGlyphLevel` le o
 // ambiente a cada execucao e a suite precisa de um unico nivel.
 process.env.SPECIFICA_GLYPHS = 'ascii';
+// O mesmo vale para cor: `detectLevel` le o ambiente e a suite espera texto
+// puro mesmo quando executada em terminal interativo.
+process.env.FORCE_COLOR = '0';
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 // Variant ASCII do hint: a suite forca SPECIFICA_GLYPHS=ascii no topo do arquivo.
