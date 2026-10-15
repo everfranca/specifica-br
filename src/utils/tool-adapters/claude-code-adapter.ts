@@ -59,6 +59,7 @@ export class ClaudeCodeAdapter implements ToolAdapter {
   public readonly slug: ToolSlug = 'claudecode';
   public readonly contratoValidado = true;
   public readonly capacidades: ToolCapabilities = CAPACIDADES_CLAUDECODE;
+  public readonly modoDeExecucao: string | null = null;
 
   constructor(private readonly runner: ProcessRunner = processRunner) {}
 

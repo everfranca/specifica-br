@@ -11,11 +11,12 @@ import type {
 } from '../types/executar-tasks.js';
 import type { ToolSlug } from '../types/config.js';
 import type { GlobalPath, ToolMapping } from '../types/init.js';
-import type { ToolAdapter } from '../types/tool-adapter.js';
+import type { McpCheckResult, ToolAdapter } from '../types/tool-adapter.js';
 import type { ProcessRunner } from './process-runner.js';
 import type { FileService } from './file-service.js';
 import type { TaskDiscoveryService } from './task-discovery.js';
 import { getExecutavel, getToolDisplayName } from './tool-adapters/tool-registry.js';
+import { resolverTemplateDoComando, detectarMarcadores } from './opencode-command-template.js';
 import { parseJsonc } from './jsonc.js';
 
 const COMANDO_EXECUTAR_TASK = 'executar-task.md';
@@ -27,7 +28,7 @@ const SKILL_EXECUTAR_TASK = path.join('executar-task', 'SKILL.md');
  * nao gera aviso algum, porque um formato inesperado nao e evidencia de defasagem.
  */
 const PISO_DE_VERSAO: Partial<Record<ToolSlug, string>> = {
-  opencode: '1.18.0',
+  opencode: '2.0.0',
 };
 
 /**
@@ -149,13 +150,17 @@ export class PreflightService {
 
     const versao = await this.adapter.getVersion();
     if (!versao) {
-      this.add('A', 'cli-versao', 'ERRO', mensagemAusente);
+      if (ferramenta === 'opencode' && caminho) {
+        this.add('A', 'cli-versao', 'AVISO', 'nao foi possivel obter a versao do OpenCode - seguindo sem essa informacao');
+      } else {
+        this.add('A', 'cli-versao', 'ERRO', mensagemAusente);
+      }
     } else if (abaixoDoPiso(ferramenta, versao)) {
       this.add(
         'A',
         'cli-versao',
         'AVISO',
-        `${this.nomeNaMensagem(ferramenta)} ${versao} abaixo da versao minima suportada ${PISO_DE_VERSAO[ferramenta]} - o lote pode falhar`
+        `${this.nomeNaMensagem(ferramenta)} ${versao} abaixo do piso suportado ${PISO_DE_VERSAO[ferramenta]} - o lote pode falhar`
       );
     } else {
       this.add('A', 'cli-versao', 'OK', `${executavel} ${versao}${caminho ? ` em ${caminho}` : ''}`);
@@ -174,15 +179,37 @@ export class PreflightService {
   /**
    * Grupo B: o executor do lote depende do artefato `executar-task`.
    *
-   * O comando e a forma primaria (o argv do OpenCode usa `--command`), mas o caminho
-   * `skills/executar-task/SKILL.md` tambem e aceito como candidato para tornar o
-   * preflight a prova de futuro: se um dia o comando migrar para skill, o lote nao
-   * quebra nesta verificacao.
+   * No ramo OpenCode a resolucao e delegada a CT-053: projeto, global e pacote,
+   * nesta ordem. No ClaudeCode a verificacao de comandos e skills permanece
+   * com a logica atual, congelada desde a task-1.
    */
   private async grupoB(
     contexto: PreflightContexto,
     mapping: ToolMapping | null
   ): Promise<void> {
+    if (contexto.ferramenta === 'opencode') {
+      const resolvido = await resolverTemplateDoComando(contexto.projetoDir, contexto.home);
+      if (resolvido === null) {
+        this.add(
+          'B',
+          'comando-executar-task',
+          'ERRO',
+          'comando executar-task nao instalado para OpenCode. Rode: specifica-br init'
+        );
+        return;
+      }
+      this.add('B', 'comando-executar-task', 'OK', `comando executar-task instalado: ${resolvido.caminho}`);
+      if (detectarMarcadores(resolvido.corpo)) {
+        this.add(
+          'B',
+          'comando-executar-task-marcadores',
+          'AVISO',
+          'o comando executar-task instalado usa marcadores nao expandidos na execucao em lote - serao entregues literalmente ao modelo'
+        );
+      }
+      return;
+    }
+
     if (!mapping) {
       this.add('B', 'comando-executar-task', 'AVISO', 'ferramenta sem mapeamento de comandos - verificacao pulada');
       return;
@@ -471,20 +498,40 @@ export class PreflightService {
 
     const nomes = [...new Set(mcps.map((m) => m.nome))];
     const resultados = await this.adapter.listMcps(nomes, contexto.opcoes.mcpTimeout);
-    const porNome = new Map(resultados.map((r) => [r.nome, r.severidade]));
+    const porNome = new Map(resultados.map((r) => [r.nome, r]));
 
     for (const nome of nomes) {
-      const severidade = porNome.get(nome) ?? 'AVISO';
+      const resultado: McpCheckResult | undefined = porNome.get(nome);
+      const severidade = resultado?.severidade ?? 'AVISO';
       if (severidade === 'OK') {
         this.add('E', `mcp:${nome}`, 'OK', `mcp:${nome} conectado`);
-      } else {
-        this.add(
-          'E',
-          `mcp:${nome}`,
-          'AVISO',
-          `mcp:${nome} declarado e nao verificavel ou nao conectado - a task prosseguira sem ele`
-        );
+        continue;
       }
+      if (contexto.ferramenta === 'opencode') {
+        const estado = resultado?.estado ?? 'desconhecido';
+        if (estado === 'falhou') {
+          this.add(
+            'E',
+            `mcp:${nome}`,
+            'AVISO',
+            `mcp:${nome} declarado e nao conectado - a task prosseguira sem ele`
+          );
+        } else {
+          this.add(
+            'E',
+            `mcp:${nome}`,
+            'AVISO',
+            `nao foi possivel confirmar o estado de mcp:${nome} no OpenCode`
+          );
+        }
+        continue;
+      }
+      this.add(
+        'E',
+        `mcp:${nome}`,
+        'AVISO',
+        `mcp:${nome} declarado e nao verificavel ou nao conectado - a task prosseguira sem ele`
+      );
     }
   }
 

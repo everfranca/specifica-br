@@ -183,6 +183,8 @@ interface AdapterOver {
   ) => Promise<TaskResult>;
   detectRateLimit?: () => boolean;
   capacidades?: Partial<ToolCapabilities>;
+  preparar?: () => Promise<void>;
+  construirArgs?: (e: EntradaDeTask) => string[];
 }
 
 interface EntradaDeTask {
@@ -192,12 +194,23 @@ interface EntradaDeTask {
 }
 
 function fakeAdapter(over: AdapterOver = {}) {
-  const chamadas = { runTask: 0 };
+  const chamadas = { runTask: 0, preparar: 0 };
   const entradas: EntradaDeTask[] = [];
   const obj = {
     capacidades: { ...CAPACIDADES_LIGADAS, ...(over.capacidades ?? {}) },
+    ...(over.preparar
+      ? {
+          preparar: async () => {
+            chamadas.preparar += 1;
+            await over.preparar?.();
+          },
+        }
+      : {}),
     buildTaskArgs(e: EntradaDeTask) {
       entradas.push(e);
+      if (over.construirArgs) {
+        return over.construirArgs(e);
+      }
       // Espelha CT-031: o destilado, quando presente, viaja no posicional.
       const posicional =
         e.contextoExecucaoConteudo === null || e.contextoExecucaoConteudo === ''
@@ -1310,7 +1323,7 @@ test('ferramenta que reporta negacoes de permissao mantem o aviso', async () => 
   );
 });
 
-test('o repasse de --max-budget-usd a CLI segue a capacidade tetoDeCustoNativo', () => {
+test('o repasse de --max-budget-usd a CLI segue a capacidade tetoDeCustoNativo', async () => {
   const opcs = opcoes({ maxBudgetUsd: 2, model: 'anthropic/claude-sonnet-4-5' });
   const entrada = {
     taskPath: '/projeto/specs/features/exemplo/task-1.md',
@@ -1325,7 +1338,9 @@ test('o repasse de --max-budget-usd a CLI segue a capacidade tetoDeCustoNativo',
   assert.equal(argsClaude.includes('--max-budget-usd'), true);
   assert.equal(argsClaude[argsClaude.indexOf('--max-budget-usd') + 1], '2');
 
-  const argsOpenCode = getAdapter('opencode').buildTaskArgs(entrada as never);
+  const adapterOpenCode = getAdapter('opencode');
+  await adapterOpenCode.preparar?.();
+  const argsOpenCode = adapterOpenCode.buildTaskArgs(entrada as never);
   assert.equal(getCapabilities('opencode').tetoDeCustoNativo, false);
   assert.equal(argsOpenCode.includes('--max-budget-usd'), false);
 });
@@ -1965,4 +1980,272 @@ test('limite de uso na reconstrucao entre tasks encerra o lote, sem executar a p
 
   assert.equal(motivo, 'limite_de_uso');
   assert.equal(eventos(logger, 'start').length, 0, 'uma task foi iniciada mesmo assim');
+});
+
+test('o resumo do ClaudeCode congela a quantidade de linhas, o cabecalho e as evidencias', async () => {
+  const { layout } = await executarLoteDeDuas();
+
+  assert.equal(layout.resumo?.length, 16);
+  assert.deepStrictEqual(layout.resumo?.slice(0, 2), ['', 'Resumo da execucao']);
+  assert.equal(layout.resumo?.filter((linha) => linha.includes('sessao=')).length, 2);
+});
+
+test('o evento end do ClaudeCode congela o conjunto de chaves sem campos da serie 2.0', async () => {
+  const { logger } = await executarLoteDeDuas();
+  const ends = eventos(logger, 'end');
+  assert.equal(ends.length, 2);
+
+  const chavesCongeladas = [
+    'cache_creation_input_tokens',
+    'cache_read_input_tokens',
+    'contabilidade_parcial',
+    'custo_acumulado_usd',
+    'custo_task_usd',
+    'duration_api_ms',
+    'duration_ms',
+    'effort',
+    'event',
+    'exit_code',
+    'ferramentas_negadas',
+    'input_tokens',
+    'is_error',
+    'model_solicitado',
+    'modelos_reportados',
+    'num_turns',
+    'output_tokens',
+    'permission_denials',
+    'reasoning_tokens',
+    'sem_certificacao',
+    'session_id',
+    'subtype',
+    'task',
+    'tokens_disponiveis_depois',
+    'tokens_gastos_acumulado_depois',
+    'tokens_gastos_task',
+    'tool',
+    'ts',
+    'usou_contexto_execucao',
+    'wall_seconds',
+  ];
+
+  for (const end of ends) {
+    assert.deepStrictEqual(Object.keys(end).sort(), chavesCongeladas);
+    assert.equal('dry_run' in end, false);
+    assert.equal('modo_de_execucao' in end, false);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// task-7 — preparar(), dry-run novo e modo_de_execucao (CT-031, CT-054, CT-055)
+// ---------------------------------------------------------------------------
+
+test('CT-055: preparar e chamado uma unica vez por lote', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({ preparar: async () => undefined });
+  const { runner } = montar({ adapter });
+
+  assert.equal(await runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.preparar, 1);
+  assert.equal(adapter.chamadas.runTask, 2);
+});
+
+test('CT-055: preparar e chamado antes de qualquer impressao de dry-run', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  let mensagensNaHoraDoPreparar: number | null = null;
+  let caixa: ReturnType<typeof montar> | null = null;
+  const adapter = fakeAdapter({
+    preparar: async () => {
+      mensagensNaHoraDoPreparar = caixa === null ? -1 : caixa.layout.mensagens.length;
+    },
+  });
+  caixa = montar({
+    adapter,
+    ferramenta: 'opencode',
+    opcoes: opcoes({ dryRun: true }),
+  });
+
+  assert.equal(await caixa.runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.preparar, 1);
+  assert.equal(mensagensNaHoraDoPreparar, 0);
+  assert.ok(caixa.layout.mensagens.some(([, texto]) => texto.startsWith('dry-run: ')));
+  assert.equal(adapter.chamadas.runTask, 0);
+});
+
+test('CT-055: adapter sem preparar executa o lote sem mudanca observavel', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const adapter = fakeAdapter();
+
+  assert.equal('preparar' in adapter.obj, false);
+
+  const { runner } = montar({ adapter });
+  assert.equal(await runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.runTask, 1);
+});
+
+test('CT-055: falha de preparar degrada com aviso e falha so a task, sem abortar o lote', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    preparar: async () => {
+      throw new Error('nao foi possivel ler o template do comando executar-task para OpenCode');
+    },
+  });
+  const { runner, layout, logger } = montar({ adapter });
+
+  assert.equal(await runner.run(tasks), 'fim_da_lista');
+  assert.equal(adapter.chamadas.preparar, 1);
+  assert.equal(adapter.chamadas.runTask, 0);
+  assert.ok(
+    layout.mensagens.some(
+      ([kind, texto]) =>
+        kind === 'aviso' && texto === 'nao foi possivel ler o template do comando executar-task para OpenCode'
+    )
+  );
+  const ends = eventos(logger, 'end');
+  assert.equal(ends.length, 2);
+  assert.ok(ends.every((end) => end.is_error === true));
+});
+
+test('CT-055: com --stop-on-failure a falha de preparar encerra na primeira task', async () => {
+  const tasks = await criarTasks([
+    { numero: 1, done: false },
+    { numero: 2, done: false },
+  ]);
+  const adapter = fakeAdapter({
+    preparar: async () => {
+      throw new Error('nao foi possivel ler o template do comando executar-task para OpenCode');
+    },
+  });
+  const { runner, logger } = montar({ adapter, opcoes: opcoes({ stopOnFailure: true }) });
+
+  assert.equal(await runner.run(tasks), 'falha_na_task');
+  assert.equal(eventos(logger, 'end').length, 1);
+});
+
+test('CT-031: dry-run exibe o posicional completo e resume o destilado, sem --command nem --variant', async () => {
+  const tasks = await criarTasks([{ numero: 1, done: false }]);
+  const caminho = await criarDestilado('DESTILADO-01');
+  const corpo = 'CORPO-DO-TEMPLATE-EXECUTAR-TASK';
+  const adapter = fakeAdapter({
+    capacidades: { formaDeInjecaoSelecionavel: true },
+    preparar: async () => undefined,
+    construirArgs: (e) => [
+      'run',
+      '--standalone',
+      '--format',
+      'json',
+      '--model',
+      'zai/glm-4.6#high',
+      '--agent',
+      'specifica-executor',
+      '--auto',
+      `${corpo}\n\n${e.taskPath}\n\n${e.contextoExecucaoConteudo ?? ''}`,
+    ],
+  });
+  const { runner, layout } = montar({
+    adapter,
+    ferramenta: 'opencode',
+    opcoes: opcoes({ dryRun: true, contextInjection: 'prompt', effort: 'high', model: 'zai/glm-4.6' }),
+    packPathInicial: caminho,
+  });
+
+  await runner.run(tasks);
+
+  const linha = layout.mensagens.find(([, texto]) => texto.startsWith('dry-run: '));
+  assert.ok(linha);
+  const texto = linha[1];
+  assert.ok(texto.includes(corpo));
+  assert.ok(texto.includes(tasks[0].caminho));
+  assert.ok(texto.includes(`<contexto-execucao: ${Buffer.byteLength('DESTILADO-01', 'utf-8')} bytes>`));
+  assert.ok(!texto.includes('DESTILADO-01'));
+  assert.ok(texto.includes('#high'));
+  assert.ok(!texto.includes('--command'));
+  assert.ok(!texto.includes('--variant'));
+});
+
+test('criterio 10: dry-run e registro do lote OpenCode nao contem --command nem --variant', async () => {
+  const argvCt031 = (effort: string) => (e: { taskPath: string }): string[] => [
+    'run',
+    '--standalone',
+    '--format',
+    'json',
+    '--model',
+    effort === 'medium' ? 'zai/glm-4.6' : 'zai/glm-4.6#high',
+    '--agent',
+    'specifica-executor',
+    '--auto',
+    e.taskPath,
+  ];
+  const executadoTasks = await criarTasks([{ numero: 1, done: false }]);
+  const executado = montar({
+    adapter: fakeAdapter({ capacidades: CAPACIDADES_OPENCODE, construirArgs: argvCt031('high'), runTask: async () => resultadoOpenCode() }),
+    ferramenta: 'opencode',
+    opcoes: opcoes({ ...OPCOES_OPENCODE, effort: 'high' }),
+  });
+  await executado.runner.run(executadoTasks);
+
+  const secoTasks = await criarTasks([{ numero: 1, done: false }]);
+  const seco = montar({
+    adapter: fakeAdapter({ capacidades: CAPACIDADES_OPENCODE, construirArgs: argvCt031('high') }),
+    ferramenta: 'opencode',
+    opcoes: opcoes({ ...OPCOES_OPENCODE, effort: 'high', dryRun: true }),
+  });
+  await seco.runner.run(secoTasks);
+
+  const linha = seco.layout.mensagens.find(([, texto]) => texto.startsWith('dry-run: '));
+  assert.ok(linha, 'o lote dry-run precisa exibir a linha de dry-run');
+  const runStart = {
+    event: 'run_start',
+    tool: 'opencode',
+    model: 'zai/glm-4.6',
+    effort: 'high',
+    modo_de_execucao: 'processo_privado',
+  };
+  const registro = [JSON.stringify(runStart), ...executado.logger.eventos.map((e) => JSON.stringify(e))].join('\n');
+
+  assert.ok(eventos(executado.logger, 'end').length > 0, 'o lote precisa ter gerado evento end para o registro ter valor');
+  assert.ok(linha[1].includes('#high'), 'o dry-run com effort high precisa exibir o sufixo para o teste ter valor');
+  assert.equal(linha[1].includes('--command'), false, 'dry-run contem --command');
+  assert.equal(linha[1].includes('--variant'), false, 'dry-run contem --variant');
+  assert.equal(registro.includes('--command'), false, 'registro contem --command');
+  assert.equal(registro.includes('--variant'), false, 'registro contem --variant');
+});
+
+test('sufixo de variante no dry-run aparece apenas com esforco diferente de medium', async () => {
+  const modeloDaLinha = async (effort: 'medium' | 'high'): Promise<string> => {
+    const tasks = await criarTasks([{ numero: 1, done: false }]);
+    const { runner, layout } = montar({
+      adapter: fakeAdapter({
+        capacidades: CAPACIDADES_OPENCODE,
+        construirArgs: (e) => [
+          'run',
+          '--standalone',
+          '--format',
+          'json',
+          '--model',
+          effort === 'medium' ? 'zai/glm-4.6' : 'zai/glm-4.6#high',
+          '--agent',
+          'specifica-executor',
+          '--auto',
+          e.taskPath,
+        ],
+      }),
+      ferramenta: 'opencode',
+      opcoes: opcoes({ ...OPCOES_OPENCODE, effort, dryRun: true }),
+    });
+    await runner.run(tasks);
+    const linha = layout.mensagens.find(([, texto]) => texto.startsWith('dry-run: '));
+    assert.ok(linha, `dry-run com effort ${effort} precisa exibir a linha`);
+    const casou = /--model (\S+)/.exec(linha[1]);
+    assert.ok(casou, `dry-run com effort ${effort} precisa exibir o --model`);
+    return casou[1];
+  };
+
+  assert.equal(await modeloDaLinha('medium'), 'zai/glm-4.6');
+  assert.ok((await modeloDaLinha('high')).includes('#high'));
 });

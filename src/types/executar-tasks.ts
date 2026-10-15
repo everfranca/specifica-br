@@ -210,6 +210,7 @@ export interface RunEventRunStart {
   max_wait_segundos: number;
   wait_on_limit: boolean;
   cabecalho: HeaderStyle;
+  modo_de_execucao?: string;
 }
 
 export interface RunEventPreflightItem {
@@ -484,18 +485,24 @@ export const OPENCODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json';
 /** Nome obrigatorio do agente criado pelo specifica-br (CT-035). */
 export const OPENCODE_AGENTE_EXECUTOR = 'specifica-executor';
 
+export interface ExecutorPermissionRule {
+  action: string;
+  resource: string;
+  effect: 'allow';
+}
+
 /**
  * Agente nao-interativo declarado pelo arquivo de apoio de execucao (CT-035).
  *
  * `mode: 'primary'` e o que torna o agente selecionavel por `--agent`. O
- * `permission` comeca sempre por `{"*": "allow"}` (RF-007): a avaliacao do
- * OpenCode usa `findLast` sobre a concatenacao das regras, e a permissao do
- * agente entra depois da global e da do projeto.
+ * `permissions` comeca sempre pela regra curinga allow-all (RF-007): a
+ * avaliacao V2 aplica a ultima regra que casa, e as regras do agente entram
+ * depois da global e da do projeto.
  */
 export interface ExecutorAgentConfig {
   description: string;
   mode: 'primary';
-  permission: Record<string, unknown>;
+  permissions: ExecutorPermissionRule[];
 }
 
 /**
@@ -509,7 +516,7 @@ export interface ExecutorAgentConfig {
 export interface ExecutorConfig {
   $schema: typeof OPENCODE_CONFIG_SCHEMA;
   instructions?: string[];
-  agent: Record<typeof OPENCODE_AGENTE_EXECUTOR, ExecutorAgentConfig>;
+  agents: Record<typeof OPENCODE_AGENTE_EXECUTOR, ExecutorAgentConfig>;
 }
 
 /**

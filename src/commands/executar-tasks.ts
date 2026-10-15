@@ -282,6 +282,9 @@ async function executar(
     max_wait_segundos: validadas.maxWaitSegundos,
     wait_on_limit: validadas.waitOnLimit,
     cabecalho: config.cabecalho,
+    // CT-054: presente apenas quando o adapter declara um modo; ausente para o
+    // ClaudeCode, cujo registro permanece byte a byte igual (RF-010).
+    ...(adapter.modoDeExecucao !== null ? { modo_de_execucao: adapter.modoDeExecucao } : {}),
   });
 
   // Cabecalho por dados (RF-005): o comando entrega `DadosDeAbertura` e a

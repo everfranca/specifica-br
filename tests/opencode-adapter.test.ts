@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'fs-extra';
 
 import { OpenCodeAdapter } from '../dist/utils/tool-adapters/opencode-adapter.js';
+import type { OpenCodeAdapterOrigens } from '../dist/utils/tool-adapters/opencode-adapter.js';
 import { ClaudeCodeAdapter } from '../dist/utils/tool-adapters/claude-code-adapter.js';
 import { OpenCodeExecutorConfigService } from '../dist/utils/opencode-executor-config.js';
 import type { EffortLevel, ExecutarTasksOptions } from '../dist/types/executar-tasks.js';
@@ -109,9 +110,40 @@ function entradaDePack(over: Partial<BuildContextPackArgsInput> = {}): BuildCont
 
 function novoAdapter(
   runner: ReturnType<typeof fakeRunner> = fakeRunner({}),
-  onAviso: (mensagem: string) => void = () => undefined
+  onAviso: (mensagem: string) => void = () => undefined,
+  origens: OpenCodeAdapterOrigens = {}
 ): OpenCodeAdapter {
-  return new OpenCodeAdapter(runner as never, new OpenCodeExecutorConfigService(), onAviso);
+  return new OpenCodeAdapter(runner as never, new OpenCodeExecutorConfigService(), onAviso, origens);
+}
+
+const CORPO_TEMPLATE_TESTE = '# Comando executar-task de teste\n\nCorpo do template de teste.';
+
+async function adapterComTemplate(opcoes: {
+  corpo?: string;
+  runner?: ReturnType<typeof fakeRunner>;
+  onAviso?: (mensagem: string) => void;
+  resolvedorDeTemplate?: OpenCodeAdapterOrigens['resolvedorDeTemplate'];
+} = {}): Promise<{ adapter: OpenCodeAdapter; projetoDir: string; home: string }> {
+  const projetoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'specifica-tpl-'));
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'specifica-home-'));
+
+  if (opcoes.resolvedorDeTemplate === undefined) {
+    const dirComando = path.join(projetoDir, '.opencode', 'command');
+    await fs.ensureDir(dirComando);
+    await fs.writeFile(
+      path.join(dirComando, 'executar-task.md'),
+      `---\ndescription: template de teste\n---\n\n${opcoes.corpo ?? CORPO_TEMPLATE_TESTE}\n`
+    );
+  }
+
+  const adapter = novoAdapter(
+    opcoes.runner ?? fakeRunner({}),
+    opcoes.onAviso ?? (() => undefined),
+    { projetoDir, home, resolvedorDeTemplate: opcoes.resolvedorDeTemplate }
+  );
+  await adapter.preparar();
+
+  return { adapter, projetoDir, home };
 }
 
 const NDJSON_DOIS_PASSOS = [
@@ -133,25 +165,25 @@ const SAIDA_MCP_LIST = [
   `${ESC}[0m`,
   '┌  MCP Servers',
   '│',
-  `●  ✓ context7 ${ESC}[90mconnected`,
+  `✓ context7 ${ESC}[90mconnected`,
   `│      ${ESC}[90mhttps://mcp.context7.com/mcp`,
   '│',
-  `●  ✓ playwright ${ESC}[90mconnected`,
+  `✓ playwright ${ESC}[90mconnected`,
   `│      ${ESC}[90mnpx @playwright/mcp@latest`,
   '│',
-  `●  ✗ quebrado ${ESC}[90mfailed`,
+  `✗ quebrado ${ESC}[90mfailed`,
   '│      Executable not found in $PATH: "comando-que-nao-existe-xyz"',
   '│',
   '└  3 server(s)',
 ].join('\n');
 
-test('buildTaskArgs produz a ordem exata de CT-031', () => {
-  const args = novoAdapter().buildTaskArgs(entradaDeTask());
+test('buildTaskArgs produz a ordem exata de CT-031', async () => {
+  const { adapter } = await adapterComTemplate();
+  const args = adapter.buildTaskArgs(entradaDeTask());
 
   assert.deepEqual(args, [
     'run',
-    '--command',
-    'executar-task',
+    '--standalone',
     '--format',
     'json',
     '--model',
@@ -159,55 +191,111 @@ test('buildTaskArgs produz a ordem exata de CT-031', () => {
     '--agent',
     'specifica-executor',
     '--auto',
-    '/projeto/specs/features/exemplo/task-1.md',
+    `${CORPO_TEMPLATE_TESTE}\n\n/projeto/specs/features/exemplo/task-1.md`,
   ]);
 });
 
-test('buildTaskArgs concatena o destilado ao posicional como um unico elemento de argv', () => {
-  const args = novoAdapter().buildTaskArgs(
+test('buildTaskArgs concatena o destilado ao posicional como um unico elemento de argv', async () => {
+  const { adapter } = await adapterComTemplate();
+  const args = adapter.buildTaskArgs(
     entradaDeTask({ contextoExecucaoConteudo: '# Contexto\nlinha' })
   );
 
-  assert.equal(args.length, 11);
-  assert.equal(args[10], '/projeto/specs/features/exemplo/task-1.md\n\n# Contexto\nlinha');
+  assert.equal(args.length, 10);
+  assert.equal(
+    args[9],
+    `${CORPO_TEMPLATE_TESTE}\n\n/projeto/specs/features/exemplo/task-1.md\n\n# Contexto\nlinha`
+  );
 });
 
-test('buildContextPackArgs e identico a CT-031 menos --command, com o prompt no posicional', () => {
-  const args = novoAdapter().buildContextPackArgs('PROMPT', entradaDePack());
+test('buildTaskArgs com esforco high e destilado confere com o schema de saida da task', async () => {
+  const { adapter } = await adapterComTemplate();
+  const args = adapter.buildTaskArgs(
+    entradaDeTask({
+      taskPath: '/abs/projeto/specs/features/exemplo/task-1.md',
+      opcoes: opcoesBase({ model: 'provider/modelo', effort: 'high' }),
+      contextoExecucaoConteudo: '<contexto-execucao: 42 bytes>',
+    })
+  );
 
-  assert.deepEqual(args, [
+  assert.deepEqual(args.slice(0, 9), [
     'run',
+    '--standalone',
     '--format',
     'json',
     '--model',
-    'anthropic/claude-haiku-4-5',
+    'provider/modelo#high',
     '--agent',
     'specifica-executor',
     '--auto',
-    '--variant',
-    'minimal',
+  ]);
+  assert.equal(
+    args[9],
+    `${CORPO_TEMPLATE_TESTE}\n\n/abs/projeto/specs/features/exemplo/task-1.md\n\n<contexto-execucao: 42 bytes>`
+  );
+  assert.equal(args.length, 10);
+});
+
+test('buildTaskArgs sem preparar previo lanca erro nominal', () => {
+  assert.throws(
+    () => novoAdapter().buildTaskArgs(entradaDeTask()),
+    /preparar\(\) precisa ser executado antes do lote/
+  );
+});
+
+test('preparar lanca erro nominal quando o template nao e resolvido', async () => {
+  const adapter = novoAdapter(fakeRunner({}), () => undefined, {
+    resolvedorDeTemplate: async () => null,
+  });
+
+  await assert.rejects(
+    adapter.preparar(),
+    /nao foi possivel ler o template do comando executar-task para OpenCode/
+  );
+});
+
+test('modoDeExecucao e processo_privado na serie 2.0', () => {
+  assert.strictEqual(novoAdapter().modoDeExecucao, 'processo_privado');
+});
+
+test('buildContextPackArgs e CT-032: --standalone, sufixo no --model e prompt no posicional', async () => {
+  const { adapter } = await adapterComTemplate();
+  const args = adapter.buildContextPackArgs('PROMPT', entradaDePack());
+
+  assert.deepEqual(args, [
+    'run',
+    '--standalone',
+    '--format',
+    'json',
+    '--model',
+    'anthropic/claude-haiku-4-5#minimal',
+    '--agent',
+    'specifica-executor',
+    '--auto',
     'PROMPT',
   ]);
 });
 
-test('o mapeamento de esforco cobre os cinco niveis de CT-031', () => {
-  const adapter = novoAdapter();
-  const variante = (effort: EffortLevel): string | null => {
+test('o mapeamento de esforco cobre os cinco niveis de CT-031 como sufixo do --model', async () => {
+  const { adapter } = await adapterComTemplate();
+  const sufixo = (effort: EffortLevel): string | null => {
     const args = adapter.buildTaskArgs(entradaDeTask({ opcoes: opcoesBase({ effort }) }));
-    const indice = args.indexOf('--variant');
-    return indice === -1 ? null : args[indice + 1];
+    const modelo = args[args.indexOf('--model') + 1];
+    return modelo.includes('#') ? modelo.split('#')[1] : null;
   };
 
-  assert.equal(variante('low'), 'minimal');
-  assert.equal(variante('medium'), null);
-  assert.equal(variante('high'), 'high');
-  assert.equal(variante('xhigh'), 'high');
-  assert.equal(variante('max'), 'max');
+  assert.equal(sufixo('low'), 'minimal');
+  assert.equal(sufixo('medium'), null);
+  assert.equal(sufixo('high'), 'high');
+  assert.equal(sufixo('xhigh'), 'high');
+  assert.equal(sufixo('max'), 'max');
 });
 
-test('nenhuma flag da lista de nao emitidos de CT-031 aparece no argv', () => {
-  const adapter = novoAdapter();
+test('nenhuma flag da lista de nao emitidos de CT-031 aparece no argv', async () => {
+  const { adapter } = await adapterComTemplate();
   const proibidas = [
+    '--command',
+    '--variant',
     '--add-dir',
     '--allowedTools',
     '--fallback-model',
@@ -295,17 +383,29 @@ test('interpretMcpStatus le o vocabulario literal da saida real de CT-033', () =
   assert.equal(status.get('ausente'), 'AVISO');
 });
 
-test('getVersion devolve a primeira linha de opencode --version', async () => {
-  const runner = fakeRunner({ primeiraLinha: '1.18.25' });
+test('getVersion extrai o semver de opencode v2.0.29', async () => {
+  const runner = fakeRunner({ primeiraLinha: 'opencode v2.0.29' });
   const versao = await novoAdapter(runner).getVersion();
 
-  assert.equal(versao, '1.18.25');
+  assert.equal(versao, '2.0.29');
   assert.equal(runner.calls[0].cmd, 'opencode');
   assert.deepEqual(runner.calls[0].args, ['--version']);
   assert.equal(runner.calls[0].opts.timeoutMs, 5000);
 });
 
-test('listMcps compoe mcpListRaw e interpretMcpStatus', async () => {
+test('getVersion extrai o semver sem prefixo v da serie 1.x', async () => {
+  assert.equal(await novoAdapter(fakeRunner({ primeiraLinha: '1.18.27' })).getVersion(), '1.18.27');
+});
+
+test('getVersion devolve string vazia sem semver na linha ou com stdout vazio', async () => {
+  assert.equal(
+    await novoAdapter(fakeRunner({ primeiraLinha: 'opencode dev' })).getVersion(),
+    ''
+  );
+  assert.equal(await novoAdapter(fakeRunner({ primeiraLinha: '' })).getVersion(), '');
+});
+
+test('listMcps compoe mcpListRaw e interpretMcpStatus com estado V2', async () => {
   const runner = fakeRunner({ stdout: SAIDA_MCP_LIST });
   const resultado = await novoAdapter(runner).listMcps(['context7', 'quebrado'], 15);
 
@@ -313,7 +413,24 @@ test('listMcps compoe mcpListRaw e interpretMcpStatus', async () => {
   assert.equal(runner.calls[0].opts.timeoutMs, 15000);
   assert.equal(runner.calls[0].opts.stdin, 'ignore');
   assert.equal(resultado[0].severidade, 'OK');
+  assert.equal(resultado[0].estado, 'conectado');
   assert.equal(resultado[1].severidade, 'AVISO');
+  assert.equal(resultado[1].estado, 'falhou');
+});
+
+test('listMcps marca desconhecido sem glifo ausente e com saida nula', async () => {
+  const semGlifo = await novoAdapter(
+    fakeRunner({ stdout: 'context7    connected' })
+  ).listMcps(['context7'], 15);
+  assert.equal(semGlifo[0].severidade, 'OK');
+  assert.equal(semGlifo[0].estado, 'conectado');
+
+  const semSaida = await novoAdapter(
+    fakeRunner({ stdout: SAIDA_MCP_LIST, timedOut: true })
+  ).listMcps(['context7'], 15);
+  assert.equal(semSaida[0].severidade, 'AVISO');
+  assert.equal(semSaida[0].estado, 'desconhecido');
+  assert.equal(semSaida[0].linha, null);
 });
 
 test('buildEnv acrescenta OPENCODE_CONFIG e nada mais', async () => {
@@ -351,11 +468,14 @@ test('buildEnv do ClaudeCode nunca define OPENCODE_CONFIG', () => {
 
 test('runTask executa opencode com o argv de CT-031 e agrega o NDJSON', async () => {
   const runner = fakeRunner({ stdout: NDJSON_UM_PASSO });
-  const resultado = await novoAdapter(runner).runTask(entradaDeTask(), '/projeto');
+  const { adapter } = await adapterComTemplate({ runner });
+  const resultado = await adapter.runTask(entradaDeTask(), '/projeto');
 
   assert.equal(runner.calls.length, 1);
   assert.equal(runner.calls[0].cmd, 'opencode');
-  assert.equal(runner.calls[0].args[0], 'run');
+  assert.deepEqual(runner.calls[0].args.slice(0, 2), ['run', '--standalone']);
+  assert.equal(runner.calls[0].args.includes('--command'), false);
+  assert.equal(runner.calls[0].args.includes('--variant'), false);
   assert.equal(runner.calls[0].opts.cwd, '/projeto');
   assert.equal(runner.calls[0].opts.stdin, 'ignore');
   assert.equal(resultado.numTurns, 1);
@@ -365,18 +485,21 @@ test('runTask executa opencode com o argv de CT-031 e agrega o NDJSON', async ()
 
 test('runPack executa o argv de CT-032 e agrega o NDJSON', async () => {
   const runner = fakeRunner({ stdout: NDJSON_UM_PASSO });
-  const resultado = await novoAdapter(runner).runPack('PROMPT', entradaDePack(), '/projeto');
+  const { adapter } = await adapterComTemplate({ runner });
+  const resultado = await adapter.runPack('PROMPT', entradaDePack(), '/projeto');
 
+  assert.deepEqual(runner.calls[0].args.slice(0, 2), ['run', '--standalone']);
   assert.equal(runner.calls[0].args.includes('--command'), false);
+  assert.equal(runner.calls[0].args.includes('--variant'), false);
   assert.equal(runner.calls[0].args[runner.calls[0].args.length - 1], 'PROMPT');
   assert.equal(resultado.isError, false);
   assert.equal(resultado.model, 'anthropic/claude-haiku-4-5');
 });
 
-test('evento error com exit code zero marca isError e subtype error', () => {
+test('evento error da serie 2.0 com exit code zero marca isError e subtype error', () => {
   const ndjson = [
-    '{"type":"step_start","timestamp":1788286294193,"sessionID":"ses_x","part":{"type":"step-start"}}',
-    '{"type":"error","timestamp":1788286294300,"sessionID":"ses_x","part":{"type":"error","message":"falhou"}}',
+    '{"type":"step_start","timestamp":1788286294193,"sessionID":"ses_exemplo","part":{"id":"prt_1","type":"step-start"}}',
+    '{"type":"error","timestamp":1788286297000,"sessionID":"ses_exemplo","error":{"type":"provider.no-route","message":"Variant unavailable for zai-coding-plan/glm-5.3: variante-inexistente"}}',
   ].join('\n');
 
   const resultado = novoAdapter().parseResult(0, ndjson, '');
@@ -384,7 +507,7 @@ test('evento error com exit code zero marca isError e subtype error', () => {
   assert.equal(resultado.isError, true);
   assert.equal(resultado.subtype, 'error');
   assert.equal(resultado.numTurns, 0);
-  assert.equal(resultado.sessionId, 'ses_x');
+  assert.equal(resultado.sessionId, 'ses_exemplo');
 });
 
 test('linha truncada no fim e descartada sem zerar a contabilidade nem virar falha', () => {
@@ -485,7 +608,7 @@ test('interpretMcpStatus devolve AVISO para todos quando a saida e nula', () => 
 });
 
 test('interpretMcpStatus trata metacaracteres do nome do MCP literalmente', () => {
-  const saida = `${ESC}[0m\n●  ✓ meu.mcp ${ESC}[90mconnected`;
+  const saida = `${ESC}[0m\n✓ meu.mcp ${ESC}[90mconnected`;
   const status = novoAdapter().interpretMcpStatus(saida, ['meu.mcp', 'meuXmcp']);
 
   assert.equal(status.get('meu.mcp'), 'OK');
@@ -502,10 +625,6 @@ test('mcpListRaw descarta integralmente a saida em timeout e em falha de spawn',
 
   assert.equal(porTimeout, null);
   assert.equal(porSpawn, null);
-});
-
-test('getVersion devolve string vazia quando a CLI falha', async () => {
-  assert.equal(await novoAdapter(fakeRunner({ primeiraLinha: '' })).getVersion(), '');
 });
 
 test('modoDePermissaoEfetivo devolve permissao total sem aviso nos modos com equivalente', () => {
@@ -573,37 +692,48 @@ test('relatoDeModeloEfetivo e false no OpenCode', () => {
   assert.equal(novoAdapter().capacidades.relatoDeModeloEfetivo, false);
 });
 
+function modeloDoArgv(args: string[]): string {
+  return args[args.indexOf('--model') + 1];
+}
+
 const FALHA_DE_VARIANTE: FakeResposta = {
   exitCode: 1,
   stdout: '',
   stderr: 'Error: variant "max" is not supported by this provider',
 };
 
-test('variante recusada reexecuta uma unica vez sem --variant e desabilita a flag no lote', async () => {
+const FALHA_DE_VARIANTE_V2: FakeResposta = {
+  exitCode: 1,
+  stdout: '',
+  stderr: 'Variant unavailable for zai-coding-plan/glm-5.3: max',
+};
+
+test('variante recusada reexecuta uma unica vez sem o sufixo e desabilita o sufixo no lote', async () => {
   const avisos: string[] = [];
-  const runner = fakeRunner([FALHA_DE_VARIANTE, { stdout: NDJSON_UM_PASSO }, { stdout: NDJSON_UM_PASSO }]);
-  const adapter = novoAdapter(runner, (m) => avisos.push(m));
+  const runner = fakeRunner([FALHA_DE_VARIANTE_V2, { stdout: NDJSON_UM_PASSO }, { stdout: NDJSON_UM_PASSO }]);
+  const { adapter } = await adapterComTemplate({ runner, onAviso: (m) => avisos.push(m) });
   const entrada = entradaDeTask({ opcoes: opcoesBase({ effort: 'max' }) });
 
   const resultado = await adapter.runTask(entrada, '/projeto');
 
   assert.equal(runner.calls.length, 2);
-  assert.equal(runner.calls[0].args.includes('--variant'), true);
+  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-sonnet-4-5#max');
+  assert.equal(modeloDoArgv(runner.calls[1].args), 'anthropic/claude-sonnet-4-5');
   assert.equal(runner.calls[1].args.includes('--variant'), false);
-  assert.deepEqual(avisos, ['esforco max nao suportado pelo provedor configurado - seguindo sem ele']);
+  assert.deepEqual(avisos, ['esforco max recusado pelo provedor - repetindo task-1.md sem esforco']);
   assert.equal(resultado.isError, false);
   assert.equal(resultado.numTurns, 1);
 
   await adapter.runTask(entrada, '/projeto');
 
   assert.equal(runner.calls.length, 3);
-  assert.equal(runner.calls[2].args.includes('--variant'), false);
+  assert.equal(modeloDoArgv(runner.calls[2].args), 'anthropic/claude-sonnet-4-5');
   assert.equal(avisos.length, 1);
 });
 
 test('variante recusada na segunda tentativa nao dispara nova reexecucao', async () => {
   const runner = fakeRunner([FALHA_DE_VARIANTE, FALHA_DE_VARIANTE, { stdout: NDJSON_UM_PASSO }]);
-  const adapter = novoAdapter(runner);
+  const { adapter } = await adapterComTemplate({ runner });
 
   const resultado = await adapter.runTask(
     entradaDeTask({ opcoes: opcoesBase({ effort: 'high' }) }),
@@ -620,7 +750,7 @@ test('falha que consumiu tokens nunca e reexecutada', async () => {
     { stdout: NDJSON_UM_PASSO },
   ]);
   const avisos: string[] = [];
-  const adapter = novoAdapter(runner, (m) => avisos.push(m));
+  const { adapter } = await adapterComTemplate({ runner, onAviso: (m) => avisos.push(m) });
 
   const resultado = await adapter.runTask(
     entradaDeTask({ opcoes: opcoesBase({ effort: 'max' }) }),
@@ -637,32 +767,33 @@ test('falha sem citacao de variante nao e reexecutada', async () => {
     { exitCode: 1, stdout: '', stderr: 'Error: model not found' },
     { stdout: NDJSON_UM_PASSO },
   ]);
-  const adapter = novoAdapter(runner);
+  const { adapter } = await adapterComTemplate({ runner });
 
   await adapter.runTask(entradaDeTask({ opcoes: opcoesBase({ effort: 'max' }) }), '/projeto');
 
   assert.equal(runner.calls.length, 1);
 });
 
-test('esforco medium nao dispara reexecucao porque nenhuma variante foi enviada', async () => {
+test('esforco medium nao dispara reexecucao porque nenhum sufixo foi enviado', async () => {
   const runner = fakeRunner([FALHA_DE_VARIANTE, { stdout: NDJSON_UM_PASSO }]);
-  const adapter = novoAdapter(runner);
+  const { adapter } = await adapterComTemplate({ runner });
 
   await adapter.runTask(entradaDeTask({ opcoes: opcoesBase({ effort: 'medium' }) }), '/projeto');
 
   assert.equal(runner.calls.length, 1);
 });
 
-test('runPack tambem reexecuta uma unica vez sem --variant', async () => {
+test('runPack tambem reexecuta uma unica vez sem o sufixo', async () => {
   const avisos: string[] = [];
-  const runner = fakeRunner([FALHA_DE_VARIANTE, { stdout: NDJSON_UM_PASSO }]);
-  const adapter = novoAdapter(runner, (m) => avisos.push(m));
+  const runner = fakeRunner([FALHA_DE_VARIANTE_V2, { stdout: NDJSON_UM_PASSO }]);
+  const { adapter } = await adapterComTemplate({ runner, onAviso: (m) => avisos.push(m) });
 
   const resultado = await adapter.runPack('PROMPT', entradaDePack(), '/projeto');
 
   assert.equal(runner.calls.length, 2);
-  assert.equal(runner.calls[1].args.includes('--variant'), false);
-  assert.deepEqual(avisos, ['esforco low nao suportado pelo provedor configurado - seguindo sem ele']);
+  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-haiku-4-5#minimal');
+  assert.equal(modeloDoArgv(runner.calls[1].args), 'anthropic/claude-haiku-4-5');
+  assert.deepEqual(avisos, ['esforco low recusado pelo provedor - repetindo exemplo sem esforco']);
   assert.equal(resultado.isError, false);
 });
 
@@ -779,10 +910,51 @@ test('fixture de mcp list: os quatro casos de interpretacao de CT-033', async ()
   assert.equal(semSaida.get('ausente'), 'AVISO');
 });
 
+test('V3 real: linha failed com sufixo de detalhe classifica como falhou (TBD-001)', () => {
+  const saida = [
+    '✓ context7    connected',
+    '✓ playwright  connected',
+    '✗ quebrado    failed: NotFound: ChildProcess.spawn (comando-que-nao-existe-xyz )',
+  ].join('\n');
+  const status = novoAdapter().interpretMcpStatus(saida, ['context7', 'quebrado']);
+
+  assert.equal(status.get('context7'), 'OK');
+  assert.equal(status.get('quebrado'), 'AVISO');
+});
+
 test('fixture de mcp list: o glifo nunca decide o status, so o vocabulario literal', async () => {
   const saida = await fixture('mcp-list.txt');
   const comGlifoDeSucesso = saida.replace('quebrado', 'com-visto').replace('✗', '✓');
   const status = novoAdapter().interpretMcpStatus(comGlifoDeSucesso, ['com-visto']);
 
   assert.equal(status.get('com-visto'), 'AVISO');
+});
+
+test('criterio 10: argv e registro sintetico V2 nao contem --command nem --variant; sufixo so fora de medium', async () => {
+  const { adapter } = await adapterComTemplate();
+  const varredura: string[] = [];
+  const modelos: Record<string, string> = {};
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    const args = adapter.buildTaskArgs(entradaDeTask({ opcoes: opcoesBase({ effort }) }));
+    varredura.push(args.join(' '));
+    modelos[effort] = modeloDoArgv(args);
+    varredura.push(adapter.buildContextPackArgs('PROMPT', entradaDePack({ packEffort: effort })).join(' '));
+  }
+  const runStart = {
+    event: 'run_start',
+    tool: 'opencode',
+    model: 'anthropic/claude-sonnet-4-5',
+    effort: 'max',
+    modo_de_execucao: 'processo_privado',
+  };
+  const registro = [JSON.stringify(runStart), ...NDJSON_DOIS_PASSOS.split('\n')].join('\n');
+  const tudo = [...varredura, registro].join('\n');
+
+  assert.ok(tudo.length > 0, 'a varredura precisa ter conteudo para o teste ter valor');
+  assert.equal(tudo.includes('--command'), false, 'saida contem --command');
+  assert.equal(tudo.includes('--variant'), false, 'saida contem --variant');
+  assert.equal(modelos['medium'].includes('#'), false, 'medium nao viaja com sufixo no --model');
+  for (const effort of ['low', 'high', 'xhigh', 'max'] as const) {
+    assert.ok(modelos[effort].includes('#'), `esforco ${effort} deveria viajar como sufixo no --model`);
+  }
 });
