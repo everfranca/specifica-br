@@ -6,6 +6,7 @@ import {
   OPENCODE_CONFIG_SCHEMA,
   type ContextInjection,
   type ExecutorConfig,
+  type ExecutorPermissionRule,
 } from '../types/executar-tasks.js';
 
 const DIR_APOIO = ['.specifica-br', 'opencode'];
@@ -22,28 +23,46 @@ const FORMA_SIMPLES = /^[A-Za-z][A-Za-z0-9-]*$/;
 /** `Ferramenta(padrao)`, com o padrao capturado verbatim. */
 const FORMA_COM_PADRAO = /^([A-Za-z][A-Za-z0-9-]*)\((.+)\)$/;
 
+/** Nome de ferramenta informado para nome de acao V2, em minusculas. */
+const ACOES_V2: Record<string, string> = {
+  read: 'read',
+  edit: 'edit',
+  shell: 'shell',
+  subagent: 'subagent',
+  grep: 'grep',
+  glob: 'glob',
+  webfetch: 'webfetch',
+  websearch: 'websearch',
+  skill: 'skill',
+  bash: 'shell',
+  task: 'subagent',
+  write: 'edit',
+  patch: 'edit',
+};
+
 /** Resultado da traducao de `--allow`: regras permissivas e avisos nominais. */
 export interface TraducaoDeAllow {
-  regras: Record<string, Record<string, 'allow'>>;
+  regras: ExecutorPermissionRule[];
   avisos: string[];
 }
 
 /**
  * Traduz os valores de `--allow` em regras permissivas do agente (CT-035).
  *
- * `Ferramenta` vira `{"<ferramenta>": {"*": "allow"}}` e `Ferramenta(padrao)`
- * vira `{"<ferramenta>": {"<padrao>": "allow"}}`, sempre com o nome da
- * ferramenta em minusculas. Qualquer outra forma nao gera regra e produz um
- * aviso nominal, uma linha por regra, nunca em silencio.
+ * `Ferramenta` vira `{action, resource: "*", effect: "allow"}` e
+ * `Ferramenta(padrao)` vira `{action, resource: "<padrao> verbatim",
+ * effect: "allow"}`, sempre com o nome de acao V2 em minusculas. Qualquer
+ * outra forma nao gera regra e produz um aviso nominal, uma linha por regra,
+ * nunca em silencio.
  *
  * Invariante de seguranca: o unico veredito produzido aqui e `allow`. Por
  * construcao a traducao nao consegue reduzir permissao alguma.
  *
  * @param allow Valores informados pelo usuario, na ordem em que ele os informou.
- * @returns Regras acumuladas por ferramenta e os avisos das formas descartadas.
+ * @returns Regras ordenadas e os avisos das formas descartadas.
  */
 export function traduzirAllow(allow: string[]): TraducaoDeAllow {
-  const regras: Record<string, Record<string, 'allow'>> = {};
+  const regras: ExecutorPermissionRule[] = [];
   const avisos: string[] = [];
 
   for (const bruta of allow) {
@@ -56,19 +75,30 @@ export function traduzirAllow(allow: string[]): TraducaoDeAllow {
     const comPadrao = FORMA_COM_PADRAO.exec(regra);
 
     if (comPadrao) {
-      const ferramenta = comPadrao[1].toLowerCase();
-      const padrao = comPadrao[2];
-      regras[ferramenta] = { ...(regras[ferramenta] ?? {}), [padrao]: 'allow' };
+      const acao = ACOES_V2[comPadrao[1].toLowerCase()];
+
+      if (acao === undefined) {
+        avisos.push(`regra de permissao ${regra} sem equivalente no OpenCode - ignorada durante o lote`);
+        continue;
+      }
+
+      regras.push({ action: acao, resource: comPadrao[2], effect: 'allow' });
       continue;
     }
 
     if (FORMA_SIMPLES.test(regra)) {
-      const ferramenta = regra.toLowerCase();
-      regras[ferramenta] = { ...(regras[ferramenta] ?? {}), '*': 'allow' };
+      const acao = ACOES_V2[regra.toLowerCase()];
+
+      if (acao === undefined) {
+        avisos.push(`regra de permissao ${regra} sem equivalente no OpenCode - ignorada durante o lote`);
+        continue;
+      }
+
+      regras.push({ action: acao, resource: '*', effect: 'allow' });
       continue;
     }
 
-    avisos.push(`--allow ${regra} nao tem equivalente no OpenCode - ignorada`);
+    avisos.push(`regra de permissao ${regra} sem equivalente no OpenCode - ignorada durante o lote`);
   }
 
   return { regras, avisos };
@@ -92,9 +122,10 @@ export interface EnsureExecutorConfigResult {
 /**
  * Monta o conteudo do arquivo de apoio de execucao do OpenCode (CT-035).
  *
- * O `permission` do agente comeca sempre por `{"*": "allow"}` e recebe as
- * regras traduzidas de `--allow` depois dele, na ordem informada pelo usuario:
- * como a avaliacao do OpenCode usa `findLast`, o que vem depois vence.
+ * O `permissions` do agente comeca sempre pela regra curinga allow-all e
+ * recebe as regras traduzidas de `--allow` depois dela, na ordem informada
+ * pelo usuario: como a avaliacao V2 aplica a ultima regra que casa, o que vem
+ * depois vence.
  *
  * @param entrada Identificacao do lote, forma de injecao, destilado e `--allow`.
  * @returns A configuracao e os avisos das regras nao traduziveis.
@@ -105,10 +136,10 @@ export function montarExecutorConfig(entrada: EnsureExecutorConfigInput): {
 } {
   const { regras, avisos } = traduzirAllow(entrada.allow);
 
-  const permission: Record<string, unknown> = { '*': 'allow' };
-  for (const [ferramenta, padroes] of Object.entries(regras)) {
-    permission[ferramenta] = padroes;
-  }
+  const permissions: ExecutorPermissionRule[] = [
+    { action: '*', resource: '*', effect: 'allow' },
+    ...regras,
+  ];
 
   let instructions: string[] | null = null;
 
@@ -129,11 +160,11 @@ export function montarExecutorConfig(entrada: EnsureExecutorConfigInput): {
   const config: ExecutorConfig = {
     $schema: OPENCODE_CONFIG_SCHEMA,
     ...(instructions === null ? {} : { instructions }),
-    agent: {
+    agents: {
       [OPENCODE_AGENTE_EXECUTOR]: {
         description: DESCRICAO_DO_AGENTE,
         mode: 'primary',
-        permission,
+        permissions,
       },
     },
   };

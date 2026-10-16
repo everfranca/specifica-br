@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import type { EffortLevel, ExecutarTasksOptions } from '../../types/executar-tasks.js';
 import type {
@@ -12,13 +14,16 @@ import type {
 import type { ToolSlug } from '../../types/config.js';
 import { OPENCODE_AGENTE_EXECUTOR } from '../../types/executar-tasks.js';
 import { OpenCodeExecutorConfigService } from '../opencode-executor-config.js';
+import { resolverTemplateDoComando } from '../opencode-command-template.js';
+import type { TemplateResolvido } from '../opencode-command-template.js';
 import { ProcessRunner, processRunner } from '../process-runner.js';
 import { detectRateLimit } from './rate-limit.js';
 import { escaparRegExp, numeroOuZero } from './parse-helpers.js';
 import { getExecutavel } from './tool-registry.js';
 
 const CLI_VERSION_TIMEOUT_MS = 5000;
-const COMANDO_EXECUTAR_TASK = 'executar-task';
+
+const SEMVER_NA_PRIMEIRA_LINHA = /v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/;
 
 /** Modo de permissao relatado pelo preflight: com o agente allow-all, e sempre total (RF-007). */
 const MODO_PERMISSAO_TOTAL = 'permissao total';
@@ -28,7 +33,7 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 
 /** Os dois padroes que, juntos, caracterizam variante recusada pelo provedor (RF-009). */
 const VARIANTE_CITADA = /variant/i;
-const VARIANTE_RECUSADA = /not supported|unsupported|invalid|unknown/i;
+const VARIANTE_RECUSADA = /not supported|unsupported|invalid|unknown|unavailable/i;
 
 const CAPACIDADES_OPENCODE: ToolCapabilities = {
   execucaoNaoInterativa: true,
@@ -77,8 +82,9 @@ function textoOuNulo(valor: unknown): string | null {
 }
 
 /**
- * Mapeamento de `--effort` para `--variant` (CT-031). `medium` devolve `null`: a
- * flag e omitida e o provedor aplica o proprio padrao.
+ * Mapeamento de `--effort` para o sufixo `#variante` de `--model` (CT-031).
+ * `medium` devolve `null`: nenhum sufixo e anexado e o provedor aplica o
+ * proprio padrao.
  */
 function mapearEsforco(effort: EffortLevel): string | null {
   switch (effort) {
@@ -97,6 +103,11 @@ function mapearEsforco(effort: EffortLevel): string | null {
       return _exaustivo;
     }
   }
+}
+
+function modeloComSufixo(modelo: string, effort: EffortLevel, varianteDesabilitada: boolean): string {
+  const variante = varianteDesabilitada ? null : mapearEsforco(effort);
+  return variante === null ? modelo : `${modelo}#${variante}`;
 }
 
 /**
@@ -140,28 +151,51 @@ function lerEvento(linha: string): EventoOpenCode | null {
  *
  * `CLAUDE_CODE_PROMPT_CACHE_TTL` nunca e definida, lida ou repassada aqui (RNF-007).
  */
+export interface OpenCodeAdapterOrigens {
+  projetoDir?: string;
+  home?: string;
+  resolvedorDeTemplate?: (projetoDir: string, home: string) => Promise<TemplateResolvido | null>;
+}
+
 export class OpenCodeAdapter implements ToolAdapter {
   public readonly slug: ToolSlug = 'opencode';
   public readonly contratoValidado = true;
   public readonly capacidades: ToolCapabilities = CAPACIDADES_OPENCODE;
+  public readonly modoDeExecucao: string = 'processo_privado';
 
   private readonly avisosEmitidos = new Set<string>();
   private varianteDesabilitada = false;
   private reexecutouPorVariante = false;
   private modeloEmUso = '';
+  private corpoDoTemplate: string | null = null;
+  private arquivoDaTaskCorrente = '';
+  private readonly projetoDir: string;
+  private readonly home: string;
+  private readonly resolvedorDeTemplate: (
+    projetoDir: string,
+    home: string
+  ) => Promise<TemplateResolvido | null>;
 
-  /**
-   * @param runner Criador de processos filhos, sempre com `shell: false`.
-   * @param configService Ciclo de vida do arquivo de apoio de CT-035, de onde sai
-   *   o caminho absoluto exportado em `OPENCODE_CONFIG`.
-   * @param onAviso Canal por onde o adapter emite os avisos nominais de RF-007 e
-   *   RF-009, sem prefixo: quem imprime o rotulo de aviso e a camada de saida.
-   */
   constructor(
     private readonly runner: ProcessRunner = processRunner,
     private readonly configService: OpenCodeExecutorConfigService = new OpenCodeExecutorConfigService(),
-    private readonly onAviso: (mensagem: string) => void = () => undefined
-  ) {}
+    private readonly onAviso: (mensagem: string) => void = () => undefined,
+    origens: OpenCodeAdapterOrigens = {}
+  ) {
+    this.projetoDir = origens.projetoDir ?? process.cwd();
+    this.home = origens.home ?? os.homedir();
+    this.resolvedorDeTemplate = origens.resolvedorDeTemplate ?? resolverTemplateDoComando;
+  }
+
+  public async preparar(): Promise<void> {
+    const resolvido = await this.resolvedorDeTemplate(this.projetoDir, this.home);
+
+    if (resolvido === null) {
+      throw new Error('nao foi possivel ler o template do comando executar-task para OpenCode');
+    }
+
+    this.corpoDoTemplate = resolvido.corpo;
+  }
 
   /** Emite um aviso nominal no maximo uma vez por execucao. */
   private avisar(mensagem: string): void {
@@ -203,68 +237,51 @@ export class OpenCodeAdapter implements ToolAdapter {
     return MODO_PERMISSAO_TOTAL;
   }
 
-  /**
-   * Argv de CT-031, na ordem estavel da tabela. O posicional e sempre **um unico**
-   * elemento de argv: o caminho da task, ou o caminho seguido de linha em branco e
-   * do conteudo do destilado na forma de injecao `prompt`.
-   *
-   * Nenhuma flag da lista de nao emitidos de CT-031 aparece aqui, em hipotese alguma.
-   */
   public buildTaskArgs(entrada: BuildTaskArgsInput): string[] {
     const { taskPath, opcoes, contextoExecucaoConteudo } = entrada;
 
+    if (this.corpoDoTemplate === null) {
+      throw new Error(
+        'template do comando executar-task nao carregado - preparar() precisa ser executado antes do lote'
+      );
+    }
+
     const args: string[] = [
       'run',
-      '--command',
-      COMANDO_EXECUTAR_TASK,
+      '--standalone',
       '--format',
       'json',
       '--model',
-      opcoes.model,
+      modeloComSufixo(opcoes.model, opcoes.effort, this.varianteDesabilitada),
       '--agent',
       OPENCODE_AGENTE_EXECUTOR,
       '--auto',
     ];
 
-    const variante = this.varianteDesabilitada ? null : mapearEsforco(opcoes.effort);
-    if (variante) {
-      args.push('--variant', variante);
+    const partes: string[] = [this.corpoDoTemplate, taskPath];
+
+    if (contextoExecucaoConteudo !== null && contextoExecucaoConteudo !== '') {
+      partes.push(contextoExecucaoConteudo);
     }
 
-    const posicional =
-      contextoExecucaoConteudo !== null && contextoExecucaoConteudo !== ''
-        ? `${taskPath}\n\n${contextoExecucaoConteudo}`
-        : taskPath;
-
-    args.push(posicional);
+    args.push(partes.join('\n\n'));
 
     return args;
   }
 
-  /**
-   * Argv de CT-032: identico ao de CT-031 menos `--command`, unica diferenca de
-   * forma. O `prompt` ja chega interpolado.
-   */
   public buildContextPackArgs(prompt: string, entrada: BuildContextPackArgsInput): string[] {
-    const args: string[] = [
+    return [
       'run',
+      '--standalone',
       '--format',
       'json',
       '--model',
-      entrada.packModel,
+      modeloComSufixo(entrada.packModel, entrada.packEffort, this.varianteDesabilitada),
       '--agent',
       OPENCODE_AGENTE_EXECUTOR,
       '--auto',
+      prompt,
     ];
-
-    const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.packEffort);
-    if (variante) {
-      args.push('--variant', variante);
-    }
-
-    args.push(prompt);
-
-    return args;
   }
 
   /**
@@ -467,14 +484,16 @@ export class OpenCodeAdapter implements ToolAdapter {
     return detectRateLimit(rawOutput);
   }
 
-  /**
-   * CT-034: `opencode --version`, primeira linha do stdout, timeout de 5 segundos,
-   * string vazia em falha ou timeout.
-   */
   public async getVersion(): Promise<string> {
-    return this.runner.runCapturingFirstLine(getExecutavel(this.slug), ['--version'], {
-      timeoutMs: CLI_VERSION_TIMEOUT_MS,
-    });
+    const primeiraLinha = await this.runner.runCapturingFirstLine(
+      getExecutavel(this.slug),
+      ['--version'],
+      {
+        timeoutMs: CLI_VERSION_TIMEOUT_MS,
+      }
+    );
+    const casamento = SEMVER_NA_PRIMEIRA_LINHA.exec(primeiraLinha.trim());
+    return casamento === null ? '' : casamento[1];
   }
 
   /**
@@ -495,27 +514,30 @@ export class OpenCodeAdapter implements ToolAdapter {
     return resultado.stdout;
   }
 
-  /**
-   * Interpreta a saida de `opencode mcp list` por MCP declarado (CT-033). O status
-   * vem do vocabulario literal da ferramenta (`connected`), nunca do glifo, que e
-   * apenas decoracao: `●  ✓ nome connected` -> `OK`; `failed`, nome ausente ou
-   * `saida === null` -> `AVISO`.
-   */
+  private estadoDoMcp(saida: string | null, nome: string): 'conectado' | 'falhou' | 'desconhecido' {
+    if (saida === null) {
+      return 'desconhecido';
+    }
+
+    const limpa = saida.replace(ANSI, '');
+    const escapado = escaparRegExp(nome);
+
+    if (new RegExp(`^\\s*(✓|✗)?\\s*${escapado}\\s+connected\\b`, 'm').test(limpa)) {
+      return 'conectado';
+    }
+
+    if (new RegExp(`^\\s*(✓|✗)?\\s*${escapado}\\s+failed\\b`, 'm').test(limpa)) {
+      return 'falhou';
+    }
+
+    return 'desconhecido';
+  }
+
   public interpretMcpStatus(saida: string | null, nomes: string[]): Map<string, 'OK' | 'AVISO'> {
     const mapa = new Map<string, 'OK' | 'AVISO'>();
-    const limpa = saida === null ? null : saida.replace(ANSI, '');
 
     for (const nome of nomes) {
-      if (limpa === null) {
-        mapa.set(nome, 'AVISO');
-        continue;
-      }
-
-      const conectado = new RegExp(
-        `^\\s*[●*+-]\\s+\\S+\\s+${escaparRegExp(nome)}\\s+connected\\b`,
-        'm'
-      );
-      mapa.set(nome, conectado.test(limpa) ? 'OK' : 'AVISO');
+      mapa.set(nome, this.estadoDoMcp(saida, nome) === 'conectado' ? 'OK' : 'AVISO');
     }
 
     return mapa;
@@ -527,7 +549,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     }
 
     const limpa = saida.replace(ANSI, '');
-    const linha = new RegExp(`^\\s*[●*+-]\\s+\\S+\\s+${escaparRegExp(nome)}\\b.*$`, 'm').exec(limpa);
+    const linha = new RegExp(`^\\s*(✓|✗)?\\s*${escaparRegExp(nome)}\\b.*$`, 'm').exec(limpa);
     return linha ? linha[0].trim() : null;
   }
 
@@ -536,13 +558,16 @@ export class OpenCodeAdapter implements ToolAdapter {
     timeoutSegundos: number
   ): Promise<McpCheckResult[]> {
     const raw = await this.mcpListRaw(timeoutSegundos);
-    const status = this.interpretMcpStatus(raw, mcpsDeclarados);
 
-    return mcpsDeclarados.map((nome) => ({
-      nome,
-      severidade: status.get(nome) ?? 'AVISO',
-      linha: this.linhaDoMcp(raw, nome),
-    }));
+    return mcpsDeclarados.map((nome) => {
+      const estado = this.estadoDoMcp(raw, nome);
+      return {
+        nome,
+        severidade: estado === 'conectado' ? 'OK' : 'AVISO',
+        linha: this.linhaDoMcp(raw, nome),
+        estado,
+      };
+    });
   }
 
   private async executar(
@@ -611,6 +636,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     onStderrChunk?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<TaskResult> {
+    this.arquivoDaTaskCorrente = path.basename(entrada.taskPath);
     const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.opcoes.effort);
 
     const resultado = await this.executar(
@@ -628,7 +654,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     this.reexecutouPorVariante = true;
     this.varianteDesabilitada = true;
     this.avisar(
-      `esforco ${entrada.opcoes.effort} nao suportado pelo provedor configurado - seguindo sem ele`
+      `esforco ${entrada.opcoes.effort} recusado pelo provedor - repetindo ${this.arquivoDaTaskCorrente} sem esforco`
     );
 
     return this.executar(
@@ -652,6 +678,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     signal?: AbortSignal,
     timeoutMs?: number
   ): Promise<TaskResult> {
+    this.arquivoDaTaskCorrente = path.basename(entrada.featureDir);
     const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.packEffort);
 
     const resultado = await this.executar(
@@ -670,7 +697,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     this.reexecutouPorVariante = true;
     this.varianteDesabilitada = true;
     this.avisar(
-      `esforco ${entrada.packEffort} nao suportado pelo provedor configurado - seguindo sem ele`
+      `esforco ${entrada.packEffort} recusado pelo provedor - repetindo ${this.arquivoDaTaskCorrente} sem esforco`
     );
 
     return this.executar(

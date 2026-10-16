@@ -80,6 +80,7 @@ export interface McpCheckResult {
   nome: string;
   severidade: 'OK' | 'AVISO';
   linha: string | null;
+  estado?: 'conectado' | 'falhou' | 'desconhecido';
 }
 
 export interface BuildContextPackArgsInput {
@@ -93,6 +94,8 @@ export interface ToolAdapter {
   readonly slug: ToolSlug;
   readonly contratoValidado: boolean;
   readonly capacidades: ToolCapabilities;
+  readonly modoDeExecucao: string | null;
+  preparar?(): Promise<void>;
 
   buildTaskArgs(entrada: BuildTaskArgsInput): string[];
   buildContextPackArgs(prompt: string, entrada: BuildContextPackArgsInput): string[];

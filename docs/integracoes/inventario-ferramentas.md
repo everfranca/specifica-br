@@ -3,11 +3,11 @@
 | Metadado | Valor |
 |:---|:---|
 | **Documento** | Inventário de referência (documento vivo) |
-| **Última atualização** | 02/09/2026 |
+| **Última atualização** | 14/10/2026 |
 | **Escopo** | Comando `specifica-br executar-tasks` |
 | **Estado** | 2 de 5 ferramentas com contrato validado |
 | **Fontes** | Código-fonte em `src/`, `specs/features/comando-executar-tasks-global/techspec.md` (CT-020 a CT-024) e documentação oficial atual das CLIs (via MCP `context7`) |
-| **Levantamentos concluídos** | OpenCode — coluna fechada em 01/09/2026 contra o código-fonte da CLI (`/anomalyco/opencode`) e **contrato de execução validado em 02/09/2026** pela feature `executar-tasks-opencode`. Detalhamento em `specs/features/executar-tasks-opencode/techspec.md` |
+| **Levantamentos concluídos** | OpenCode — coluna fechada em 01/09/2026 contra o código-fonte da CLI (`/anomalyco/opencode`) e **contrato de execução validado em 02/09/2026** pela feature `executar-tasks-opencode`. Detalhamento em `specs/features/executar-tasks-opencode/techspec.md`. **Contrato da série 2.0 vigente desde 14/10/2026** pela feature `executar-tasks-opencode-v2` (`specs/features/executar-tasks-opencode-v2/techspec.md`, seções 4.5 e 4.6): execução headless por `run --standalone` com mensagem direta, esforço como sufixo de variante no `--model`, permissões no formato `agents` com `permissions` array, versão com extração de semver e piso `2.0.0` |
 
 ---
 
@@ -332,12 +332,12 @@ A coluna **OpenCode** foi fechada em 01/09/2026 contra o código-fonte da CLI
 
 | Necessidade | Claude Code | OpenCode | Cursor CLI | Gemini CLI | Kiro |
 |:---|:---|:---|:---|:---|:---|
-| Execução headless | `-p <prompt>` | `opencode run --command <nome> <args>` | `agent -p <prompt>` | `gemini -p <prompt>` | `?` |
+| Execução headless | `-p <prompt>` | `opencode run --standalone` com mensagem direta (template do comando `executar-task` lido pela própria integração, sem frontmatter, seguido do caminho da task) | `agent -p <prompt>` | `gemini -p <prompt>` | `?` |
 | Saída estruturada | `--output-format json` | `--format json` (**NDJSON de eventos**) | `--output-format json\|stream-json` | `--output-format json\|stream-json` (`-o`) | `?` |
-| Modelo | `--model <modelo>` | `--model provider/modelo` (`-m`) | `--model <modelo>` | `--model <modelo>` | `?` |
-| Nível de esforço | `--effort <nivel>` | `--variant <high\|max\|minimal>` | — | — | `?` |
-| Sem prompt de permissão | `--permission-mode bypassPermissions` | agente com `{"*":"allow"}` via `OPENCODE_CONFIG` + `--agent` (`--auto` **não** basta) | `--force` | `--approval-mode=yolo` (`--yolo` está deprecado) | `?` |
-| Modo de permissão granular | `acceptEdits\|auto\|dontAsk\|manual\|bypassPermissions` | `permission` em config, global ou por agente; última regra casada vence | `permissions.allow` / `permissions.deny` em config | `--approval-mode` | `?` |
+| Modelo | `--model <modelo>` | `--model provider/modelo` (`-m`), com sufixo `#variante` quando o esforço difere de `medium` | `--model <modelo>` | `--model <modelo>` | `?` |
+| Nível de esforço | `--effort <nivel>` | sufixo `#variante` no `--model` (sem flag dedicada; recusa do provedor repete a task uma vez sem o sufixo, com aviso) | — | — | `?` |
+| Sem prompt de permissão | `--permission-mode bypassPermissions` | agente `specifica-executor` com permissão total entregue por `OPENCODE_CONFIG` a partir de `~/.specifica-br/opencode/` + `--agent` e `--auto` | `--force` | `--approval-mode=yolo` (`--yolo` está deprecado) | `?` |
+| Modo de permissão granular | `acceptEdits\|auto\|dontAsk\|manual\|bypassPermissions` | `agents` com `permissions` array; última regra que casa vence e regras de agente são concatenadas depois das globais | `permissions.allow` / `permissions.deny` em config | `--approval-mode` | `?` |
 | Diretórios extras de leitura | `--add-dir <dir>` (repetível) | — (só `external_directory: allow`; `--dir` troca o cwd) | — | `--include-directories` (repetível ou por vírgula) | `?` |
 | Injeção de system prompt | `--append-system-prompt-file <arquivo>` | `instructions: ["<caminho>"]` no arquivo de apoio entregue por `OPENCODE_CONFIG` (camada adicional do system prompt), ou concatenação ao posicional — escolhido por `--context-injection` | — | — | `?` |
 | Modelo de fallback | `--fallback-model <lista ordenada>` | — | — | — | — |
@@ -363,8 +363,8 @@ A coluna **OpenCode** foi fechada em 01/09/2026 contra o código-fonte da CLI
 
 | Necessidade | Claude Code | OpenCode | Cursor CLI | Gemini CLI | Kiro |
 |:---|:---|:---|:---|:---|:---|
-| Versão da CLI | `claude --version` | `opencode --version` (`-v`) | `?` | `?` | `?` |
-| Listagem de MCPs | `claude mcp list` | `opencode mcp list` (alias `mcp ls`) — saída decorada com ANSI; status pelo vocabulário literal `connected`/`failed`, nunca pelo glifo | `?` | `?` | `?` |
+| Versão da CLI | `claude --version` | `opencode --version` (`-v`), com extração de semver e piso `2.0.0` (aviso nominal, sem aborto) | `?` | `?` | `?` |
+| Listagem de MCPs | `claude mcp list` | `opencode mcp list` (alias `mcp ls`) no formato V2 — saída decorada com ANSI; status pelo vocabulário literal `connected`/`failed`, nunca pelo glifo | `?` | `?` | `?` |
 | Detecção de limite de uso | regex sobre o texto bruto | mesma regex sobre o texto bruto (mensagem vem do provider) | `?` | `?` | `?` |
 
 ### 4.4 Leitura das tabelas acima
@@ -402,7 +402,7 @@ Quatro conclusões saltam do mapa:
 Estrutura uniforme para cada integração futura. As três primeiras linhas de cada ficha já
 estão definidas no código; o restante precisa ser levantado.
 
-### 5.1 OpenCode (`opencode`) — contrato validado em 02/09/2026
+### 5.1 OpenCode (`opencode`) — contrato validado em 02/09/2026, série 2.0 vigente desde 14/10/2026
 
 | Item | Valor |
 |:---|:---|
@@ -411,12 +411,12 @@ estão definidas no código; o restante precisa ser levantado.
 | Comandos globais | `<config>/opencode/command/` (única ferramenta com base `config`, não `home`) |
 | Skills | `.agents/skills/` (projeto e global) |
 | Config validada no preflight | `opencode.json` e `opencode.jsonc`, por parser tolerante a comentários e vírgula final |
-| Execução headless | `opencode run --command <nome> <args>` — `--command` é obrigatório para invocar comando customizado; sem ele a mensagem vai como texto puro, **sem expansão de `/`** |
-| Modelo | `--model provider/modelo` (`-m`) |
-| Esforço | `--variant <high\|max\|minimal>` — flag dedicada, não sufixo de modelo |
-| Permissões | `permission` em `opencode.json`/`opencode.jsonc`, global ou por agente; resolução por *última regra que casa* |
+| Execução headless | `opencode run --standalone` com mensagem direta (template do comando lido pela própria integração) — o mecanismo anterior por nome de comando customizado foi removido na série 2.0 |
+| Modelo | `--model provider/modelo` (`-m`), com esforço como sufixo `#variante` |
+| Esforço | sufixo de variante no `--model` (sem flag dedicada; a flag de variante da série anterior foi removida) |
+| Permissões | `agents` com `permissions` array em arquivo de apoio entregue por `OPENCODE_CONFIG`; resolução por *última regra que casa*, com regras de agente concatenadas depois das globais |
 | Saída estruturada | `--format json` → NDJSON de eventos; tokens e custo em `step_finish` |
-| Auxiliares | `opencode --version` (piso `1.18.0`), `opencode mcp list` |
+| Auxiliares | `opencode --version` com extração de semver (piso `2.0.0`, aviso nominal sem aborto), `opencode mcp list` no formato V2 |
 | A levantar | Nada em aberto: o formato de `opencode mcp list` foi capturado byte a byte e a injeção do contexto é resolvida por `instructions`, com `--context-injection` selecionando a forma |
 
 **Prioridade confirmada:** `specs/prompts/0004-execucao-tasks-loop-com-opencode.md` é o pedido
@@ -435,7 +435,7 @@ reportado, declarado como `n/d` e nunca como zero).
 **Checklist para `contratoValidado: true`:**
 - [x] Confirmar o formato de saída estruturada de `opencode run` e mapear os campos de `TaskResult` — NDJSON, agregação por `step_finish`
 - [x] Decidir como expressar permissões sem escrever arquivos no projeto do usuário — agente allow-all via `OPENCODE_CONFIG`
-- [x] Mapear `--effort` — é `--variant`, não sufixo de modelo
+- [x] Mapear `--effort` — sufixo `#variante` no `--model` (a flag dedicada da série anterior foi removida na série 2.0)
 - [x] Definir o comportamento quando não há `total_cost_usd` — há custo (`step_finish.part.cost`); a questão deixou de existir
 - [x] Decidir o destino do Contexto de Execução — as duas formas ficam disponíveis, escolhidas por `--context-injection` (`prompt` é o padrão; `instructions` declara o caminho no arquivo de apoio)
 - [x] Levantar o formato de linha de `opencode mcp list` para a regex de status — capturado byte a byte, com ANSI removido antes da leitura
@@ -614,7 +614,7 @@ implementação do adapter. As células `?` são, hoje, a lista de perguntas em 
 projeto.
 
 **A prática foi exercitada no OpenCode em 01/09/2026 e se pagou.** Duas suposições deste
-documento caíram (`--effort` não é sufixo de modelo, e sim `--variant`; o custo em USD existe),
-e apareceu uma diferença estrutural — NDJSON em vez de objeto único — que teria sido descoberta
-tarde, já com o adapter em código. Recomenda-se tornar o levantamento prévio obrigatório para
+documento caíram na época (o custo em USD existe; a saída é NDJSON em vez de objeto único),
+e a série 2.0 (14/10/2026) consolidou o contrato vigente: esforço como sufixo `#variante` no
+`--model` e execução headless por `run --standalone` com mensagem direta. Recomenda-se tornar o levantamento prévio obrigatório para
 Cursor, Gemini CLI e Kiro.

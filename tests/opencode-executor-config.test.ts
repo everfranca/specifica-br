@@ -37,6 +37,11 @@ async function lerConfig(caminho: string): Promise<Record<string, unknown>> {
   return JSON.parse(bruto) as Record<string, unknown>;
 }
 
+function executorDe(config: Record<string, unknown>): Record<string, unknown> {
+  const agentes = config.agents as Record<string, Record<string, unknown>>;
+  return agentes['specifica-executor'];
+}
+
 test('grava o arquivo em ~/.specifica-br/opencode com o RUN_ID e o PID no nome', async () => {
   const home = await homeTemporario();
   const servico = new OpenCodeExecutorConfigService(home);
@@ -78,28 +83,101 @@ test('forma prompt omite a chave instructions, nunca a escreve como lista vazia'
   assert.equal('instructions' in config, false);
 });
 
-test('o agente se chama specifica-executor, e primary e comeca por curinga allow', async () => {
+test('o agente se chama specifica-executor, e primary e comeca pelo curinga allow-all', async () => {
   const home = await homeTemporario();
   const servico = new OpenCodeExecutorConfigService(home);
 
   const gravado = await servico.ensure(entrada({ allow: ['Read'] }));
   const config = await lerConfig(gravado.caminho);
-  const agentes = config.agent as Record<string, Record<string, unknown>>;
-  const executor = agentes['specifica-executor'];
+  const executor = executorDe(config);
+  const permissions = executor.permissions as Array<Record<string, string>>;
 
   assert.equal(executor.description, 'Executor de tasks do specifica-br (uso nao-interativo)');
   assert.equal(executor.mode, 'primary');
-  assert.equal(Object.keys(executor.permission as object)[0], '*');
-  assert.equal((executor.permission as Record<string, unknown>)['*'], 'allow');
+  assert.deepEqual(permissions[0], { action: '*', resource: '*', effect: 'allow' });
 });
 
-test('traduz Ferramenta e Ferramenta(padrao) em regras allow com o nome em minusculas', () => {
+test('congela o JSON literal com instructions, destilado e --allow traduzido', () => {
+  const destilado = '/abs/projeto/specs/features/exemplo/contexto-execucao.md';
+  const { config, avisos } = montarExecutorConfig(
+    entrada({
+      runId: '20261014_120000_1234-5678',
+      pid: 5678,
+      formaDeInjecao: 'instructions',
+      destiladoPath: destilado,
+      allow: ['Bash(git commit:*)', 'WebSearch', 'mcp__servidor__ferramenta'],
+    })
+  );
+
+  assert.deepEqual(config, {
+    $schema: 'https://opencode.ai/config.json',
+    instructions: [destilado],
+    agents: {
+      'specifica-executor': {
+        description: 'Executor de tasks do specifica-br (uso nao-interativo)',
+        mode: 'primary',
+        permissions: [
+          { action: '*', resource: '*', effect: 'allow' },
+          { action: 'shell', resource: 'git commit:*', effect: 'allow' },
+          { action: 'websearch', resource: '*', effect: 'allow' },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(avisos, [
+    'regra de permissao mcp__servidor__ferramenta sem equivalente no OpenCode - ignorada durante o lote',
+  ]);
+});
+
+test('forma prompt com destilado disponivel omite a chave instructions', () => {
+  const { config } = montarExecutorConfig(
+    entrada({ formaDeInjecao: 'prompt', destiladoPath: '/abs/contexto-execucao.md' })
+  );
+
+  assert.equal('instructions' in config, false);
+});
+
+test('traduz Ferramenta e Ferramenta(padrao) em regras allow com acao V2 em minusculas', () => {
   const { regras, avisos } = traduzirAllow(['Read', 'Bash(git commit:*)']);
 
-  assert.deepEqual(regras, {
-    read: { '*': 'allow' },
-    bash: { 'git commit:*': 'allow' },
-  });
+  assert.deepEqual(regras, [
+    { action: 'read', resource: '*', effect: 'allow' },
+    { action: 'shell', resource: 'git commit:*', effect: 'allow' },
+  ]);
+  assert.deepEqual(avisos, []);
+});
+
+test('traduz os nomes de acao V2 diretos, com caixa ignorada', () => {
+  const { regras, avisos } = traduzirAllow([
+    'Read',
+    'Edit',
+    'Shell',
+    'Subagent',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+  ]);
+
+  assert.deepEqual(
+    regras.map((r) => r.action),
+    ['read', 'edit', 'shell', 'subagent', 'grep', 'glob', 'webfetch', 'websearch', 'skill']
+  );
+  assert.ok(regras.every((r) => r.resource === '*'));
+  assert.deepEqual(avisos, []);
+});
+
+test('traduz as equivalencias V1 para a acao V2 correspondente', () => {
+  const { regras, avisos } = traduzirAllow(['Bash', 'Task', 'Write', 'Patch', 'Write(src:*)']);
+
+  assert.deepEqual(regras, [
+    { action: 'shell', resource: '*', effect: 'allow' },
+    { action: 'subagent', resource: '*', effect: 'allow' },
+    { action: 'edit', resource: '*', effect: 'allow' },
+    { action: 'edit', resource: '*', effect: 'allow' },
+    { action: 'edit', resource: 'src:*', effect: 'allow' },
+  ]);
   assert.deepEqual(avisos, []);
 });
 
@@ -107,9 +185,16 @@ test('as regras traduzidas entram depois do curinga, na ordem informada', () => 
   const { config } = montarExecutorConfig(
     entrada({ allow: ['Read', 'Bash(git commit:*)'] })
   );
-  const permission = config.agent['specifica-executor'].permission;
+  const permissions = config.agents['specifica-executor'].permissions;
 
-  assert.deepEqual(Object.keys(permission), ['*', 'read', 'bash']);
+  assert.deepEqual(
+    permissions.map((p) => [p.action, p.resource]),
+    [
+      ['*', '*'],
+      ['read', '*'],
+      ['shell', 'git commit:*'],
+    ]
+  );
 });
 
 test('remove o arquivo deste lote no encerramento', async () => {
@@ -135,51 +220,38 @@ test('dois RUN_ID distintos produzem arquivos distintos, sem sobrescrita', async
   assert.equal(await fs.pathExists(b.caminho), true);
 });
 
-test('forma nao reconhecivel de --allow e descartada com aviso nominal, uma por regra', () => {
+test('forma sem equivalente e descartada com aviso nominal, uma linha por regra', () => {
   const { regras, avisos } = traduzirAllow([
     'mcp__servidor__ferramenta',
     'Read',
     '???',
+    'FerramentaDesconhecida',
   ]);
 
-  assert.deepEqual(regras, { read: { '*': 'allow' } });
+  assert.deepEqual(regras, [{ action: 'read', resource: '*', effect: 'allow' }]);
   assert.deepEqual(avisos, [
-    '--allow mcp__servidor__ferramenta nao tem equivalente no OpenCode - ignorada',
-    '--allow ??? nao tem equivalente no OpenCode - ignorada',
+    'regra de permissao mcp__servidor__ferramenta sem equivalente no OpenCode - ignorada durante o lote',
+    'regra de permissao ??? sem equivalente no OpenCode - ignorada durante o lote',
+    'regra de permissao FerramentaDesconhecida sem equivalente no OpenCode - ignorada durante o lote',
   ]);
 });
 
-test('padroes distintos da mesma ferramenta se acumulam sob a mesma chave', () => {
-  const { regras } = traduzirAllow(['Bash(git commit:*)', 'Bash(npm test:*)']);
-
-  assert.deepEqual(regras, {
-    bash: { 'git commit:*': 'allow', 'npm test:*': 'allow' },
-  });
-});
-
-function vereditos(valor: unknown): string[] {
-  if (typeof valor === 'string') {
-    return [valor];
-  }
-  if (typeof valor === 'object' && valor !== null) {
-    return Object.values(valor as Record<string, unknown>).flatMap(vereditos);
-  }
-  return [];
-}
-
-test('nenhum veredito deny e produzido, qualquer que seja o --allow', async () => {
+test('nenhum efeito diferente de allow e produzido, qualquer que seja o --allow', async () => {
   const home = await homeTemporario();
   const servico = new OpenCodeExecutorConfigService(home);
 
   const gravado = await servico.ensure(
-    entrada({ allow: ['Read', 'Bash(rm -rf *)', 'deny', 'Write(deny)'] })
+    entrada({ allow: ['Read', 'Bash(rm -rf *)', 'deny', 'Write(deny)', 'mcp__x__y'] })
   );
   const config = await lerConfig(gravado.caminho);
-  const agentes = config.agent as Record<string, Record<string, unknown>>;
-  const todos = vereditos(agentes['specifica-executor'].permission);
+  const permissions = executorDe(config).permissions as Array<Record<string, string>>;
 
-  assert.equal(todos.length > 0, true);
-  assert.deepEqual([...new Set(todos)], ['allow']);
+  assert.equal(permissions.length > 0, true);
+  assert.deepEqual([...new Set(permissions.map((p) => p.effect))], ['allow']);
+  assert.deepEqual(gravado.avisos, [
+    'regra de permissao deny sem equivalente no OpenCode - ignorada durante o lote',
+    'regra de permissao mcp__x__y sem equivalente no OpenCode - ignorada durante o lote',
+  ]);
 });
 
 test('a escrita e atomica: nenhum .tmp sobrevive ao final', async () => {

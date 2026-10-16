@@ -5,8 +5,10 @@ import path from 'node:path';
 import fs from 'fs-extra';
 
 import { ClaudeCodeAdapter } from '../dist/utils/tool-adapters/claude-code-adapter.js';
+import { OpenCodeAdapter } from '../dist/utils/tool-adapters/opencode-adapter.js';
+import { OpenCodeExecutorConfigService } from '../dist/utils/opencode-executor-config.js';
 import type { ExecutarTasksOptions } from '../dist/types/executar-tasks.js';
-import type { BuildTaskArgsInput } from '../dist/types/tool-adapter.js';
+import type { BuildTaskArgsInput, ToolAdapter } from '../dist/types/tool-adapter.js';
 
 function opcoesBase(over: Partial<ExecutarTasksOptions> = {}): ExecutarTasksOptions {
   return {
@@ -733,4 +735,82 @@ test('runPack sem teto informado nao passa timeoutMs ao runner', async () => {
   );
 
   assert.equal(runner.calls[0]?.opts.timeoutMs, undefined);
+});
+
+test('RF-010: buildTaskArgs congela o argv da fixture com permissionMode explicito e budget zero omitido', () => {
+  const adapter = novoAdapter(fakeRunner({}));
+
+  const args = adapter.buildTaskArgs(
+    entrada({
+      taskPath: '/abs/projeto/specs/features/exemplo/task-1.md',
+      opcoes: opcoesBase({
+        model: 'sonnet',
+        effort: 'medium',
+        permissionMode: 'bypassPermissions',
+        autoApprove: true,
+        maxBudgetUsd: 0,
+        cacheTuning: true,
+      }),
+      extraDirs: [],
+      contextoExecucaoPath: null,
+    })
+  );
+
+  assert.deepStrictEqual(args, [
+    '-p',
+    '/executar-task /abs/projeto/specs/features/exemplo/task-1.md',
+    '--output-format',
+    'json',
+    '--model',
+    'sonnet',
+    '--effort',
+    'medium',
+    '--permission-mode',
+    'bypassPermissions',
+    '--exclude-dynamic-system-prompt-sections',
+  ]);
+});
+
+test('ENV-001: buildEnv do ClaudeCode nunca cria OPENCODE_CONFIG e repassa o valor intacto', () => {
+  const adapter = novoAdapter(fakeRunner({}));
+
+  const limpo = adapter.buildEnv(true, { PATH: '/usr/bin' });
+  assert.equal('OPENCODE_CONFIG' in limpo, false);
+  assert.equal(limpo.CLAUDE_CODE_PROMPT_CACHE_TTL, '1h');
+
+  const base: NodeJS.ProcessEnv = { PATH: '/usr/bin', OPENCODE_CONFIG: '/tmp/executor.json' };
+  const repassado = adapter.buildEnv(true, base);
+  assert.equal(repassado.OPENCODE_CONFIG, '/tmp/executor.json');
+  assert.equal(repassado.CLAUDE_CODE_PROMPT_CACHE_TTL, '1h');
+  assert.deepStrictEqual(base, { PATH: '/usr/bin', OPENCODE_CONFIG: '/tmp/executor.json' });
+
+  const semTuning = adapter.buildEnv(false, { OPENCODE_CONFIG: '/tmp/executor.json' });
+  assert.equal(semTuning.OPENCODE_CONFIG, '/tmp/executor.json');
+  assert.equal('CLAUDE_CODE_PROMPT_CACHE_TTL' in semTuning, false);
+});
+
+test('RNF-007: buildEnv do OpenCode nunca define CLAUDE_CODE_PROMPT_CACHE_TTL', () => {
+  const adapter = new OpenCodeAdapter(fakeRunner({}) as never, new OpenCodeExecutorConfigService());
+
+  assert.equal(adapter.buildEnv(true, { PATH: '/usr/bin' }).CLAUDE_CODE_PROMPT_CACHE_TTL, undefined);
+  assert.equal(adapter.buildEnv(false, { PATH: '/usr/bin' }).CLAUDE_CODE_PROMPT_CACHE_TTL, undefined);
+  assert.equal(
+    'CLAUDE_CODE_PROMPT_CACHE_TTL' in adapter.buildEnv(true, { PATH: '/usr/bin' }),
+    false
+  );
+});
+
+test('CT-055: ClaudeCodeAdapter declara modoDeExecucao null e nao implementa preparar', () => {
+  const adapter = new ClaudeCodeAdapter(fakeRunner({}) as never);
+  const contratual: ToolAdapter = adapter;
+
+  assert.strictEqual(contratual.modoDeExecucao, null);
+  assert.strictEqual('preparar' in adapter, false);
+});
+
+test('CT-055: OpenCodeAdapter declara modoDeExecucao processo_privado na serie 2.0', () => {
+  const adapter = new OpenCodeAdapter(fakeRunner({}) as never, new OpenCodeExecutorConfigService());
+  const contratual: ToolAdapter = adapter;
+
+  assert.strictEqual(contratual.modoDeExecucao, 'processo_privado');
 });

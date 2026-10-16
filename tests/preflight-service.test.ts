@@ -75,11 +75,12 @@ function fakeRunner(which: WhichMap = {}): { which: (c: string) => Promise<strin
 function fakeAdapter(over: {
   versao?: string;
   mcpStatus?: Record<string, 'OK' | 'AVISO'>;
+  mcpEstado?: Record<string, 'conectado' | 'falhou' | 'desconhecido'>;
   modoDePermissao?: string;
 } = {}): {
   getVersion: () => Promise<string>;
   modoDePermissaoEfetivo: (opcoes: ExecutarTasksOptions) => string;
-  listMcps: (nomes: string[], t: number) => Promise<Array<{ nome: string; severidade: 'OK' | 'AVISO'; linha: null }>>;
+  listMcps: (nomes: string[], t: number) => Promise<Array<{ nome: string; severidade: 'OK' | 'AVISO'; linha: string | null; estado: 'conectado' | 'falhou' | 'desconhecido' }>>;
   runTask: () => Promise<never>;
   mcpChamadas: number;
   runTaskChamadas: number;
@@ -109,11 +110,16 @@ function fakeAdapter(over: {
     },
     listMcps: async (nomes: string[]) => {
       estado.mcpChamadas += 1;
-      return nomes.map((nome) => ({
-        nome,
-        severidade: over.mcpStatus?.[nome] ?? 'AVISO',
-        linha: null,
-      }));
+      return nomes.map((nome) => {
+        const severidade = over.mcpStatus?.[nome] ?? 'AVISO';
+        const estado = over.mcpEstado?.[nome] ?? (severidade === 'OK' ? 'conectado' : 'desconhecido');
+        return {
+          nome,
+          severidade,
+          linha: estado === 'conectado' ? `✓ ${nome}    connected` : `✗ ${nome}  failed`,
+          estado,
+        };
+      });
     },
     runTask: async () => {
       estado.runTaskChamadas += 1;
@@ -322,7 +328,7 @@ test('Grupo A marca ERRO com a mensagem nominal quando a CLI nao esta no PATH', 
   );
 });
 
-test('Grupo A marca ERRO quando getVersion devolve string vazia', async () => {
+test('preflight do claudecode congela a mensagem de ERRO da versao vazia', async () => {
   await cenarioFeliz();
   const resultado = await servico(
     fakeRunner({ claude: '/usr/bin/claude' }),
@@ -330,7 +336,44 @@ test('Grupo A marca ERRO quando getVersion devolve string vazia', async () => {
     fakeFileService()
   ).run(contexto());
 
-  assert.ok(itemErro(resultado, (i) => i.grupo === 'A' && i.item === 'cli-versao'));
+  const itemVersao = resultado.itens.find((i) => i.grupo === 'A' && i.item === 'cli-versao');
+  assert.deepStrictEqual(
+    { severidade: itemVersao?.severidade, mensagem: itemVersao?.mensagem },
+    {
+      severidade: 'ERRO',
+      mensagem: 'CLI de claudecode nao encontrada no PATH. Abortado antes de gastar tokens.',
+    }
+  );
+});
+
+test('preflight do claudecode congela a mensagem unica de MCP conectado e nao conectado', async () => {
+  await cenarioFeliz();
+  const conectado = await servico(
+    fakeRunner({ claude: '/usr/bin/claude' }),
+    fakeAdapter({ mcpStatus: { context7: 'OK' } }),
+    fakeFileService()
+  ).run(contexto());
+
+  const ok = conectado.itens.find((i) => i.item === 'mcp:context7');
+  assert.deepStrictEqual(
+    { severidade: ok?.severidade, mensagem: ok?.mensagem },
+    { severidade: 'OK', mensagem: 'mcp:context7 conectado' }
+  );
+
+  const naoVerificavel = await servico(
+    fakeRunner({ claude: '/usr/bin/claude' }),
+    fakeAdapter(),
+    fakeFileService()
+  ).run(contexto());
+
+  const aviso = naoVerificavel.itens.find((i) => i.item === 'mcp:context7');
+  assert.deepStrictEqual(
+    { severidade: aviso?.severidade, mensagem: aviso?.mensagem },
+    {
+      severidade: 'AVISO',
+      mensagem: 'mcp:context7 declarado e nao verificavel ou nao conectado - a task prosseguira sem ele',
+    }
+  );
 });
 
 test('Grupo A verifica cada --require-cmd e marca ERRO para o ausente', async () => {
@@ -748,7 +791,7 @@ function contextoOpenCode(over: Partial<PreflightContexto> = {}): PreflightConte
 }
 
 function servicoOpenCode(
-  versao = '1.18.25',
+  versao = '2.0.29',
   which: WhichMap = { opencode: '/usr/bin/opencode' }
 ): PreflightService {
   return servico(fakeRunner(which), fakeAdapter({ versao, mcpStatus: { context7: 'OK' } }), fakeFileService(MAPPING_OPENCODE));
@@ -805,7 +848,7 @@ test('OpenCode: opencode.json e opencode.jsonc com comentario e virgula final sa
 test('OpenCode: CLI ausente do PATH e ERRO com a mensagem nominal', async () => {
   await cenarioFelizOpenCode();
 
-  const resultado = await servicoOpenCode('1.18.25', {}).run(contextoOpenCode());
+  const resultado = await servicoOpenCode('2.0.29', {}).run(contextoOpenCode());
   const erro = item(resultado, 'cli-opencode');
 
   assert.strictEqual(erro?.severidade, 'ERRO');
@@ -816,24 +859,33 @@ test('OpenCode: CLI ausente do PATH e ERRO com a mensagem nominal', async () => 
   assert.strictEqual(resultado.temErro, true);
 });
 
-test('OpenCode: versao abaixo do piso 1.18.0 e AVISO, e o lote prossegue', async () => {
+test('OpenCode: versao abaixo do piso 2.0.0 e AVISO, e o lote prossegue', async () => {
   await cenarioFelizOpenCode();
 
-  const resultado = await servicoOpenCode('1.17.9').run(contextoOpenCode());
+  const resultado = await servicoOpenCode('1.18.27').run(contextoOpenCode());
   const versao = item(resultado, 'cli-versao');
 
   assert.strictEqual(versao?.severidade, 'AVISO');
   assert.strictEqual(
     versao?.mensagem,
-    'OpenCode 1.17.9 abaixo da versao minima suportada 1.18.0 - o lote pode falhar'
+    'OpenCode 1.18.27 abaixo do piso suportado 2.0.0 - o lote pode falhar'
   );
   assert.strictEqual(resultado.temErro, false);
+});
+
+test('OpenCode: versao 2.0.29 acima do piso e OK', async () => {
+  await cenarioFelizOpenCode();
+
+  const resultado = await servicoOpenCode('2.0.29').run(contextoOpenCode());
+
+  assert.strictEqual(item(resultado, 'cli-versao')?.severidade, 'OK');
+  assert.ok(!resultado.itens.some((i) => i.item === 'cli-versao' && i.severidade === 'AVISO'));
 });
 
 test('OpenCode: versao exatamente no piso nao gera aviso', async () => {
   await cenarioFelizOpenCode();
 
-  const resultado = await servicoOpenCode('1.18.0').run(contextoOpenCode());
+  const resultado = await servicoOpenCode('2.0.0').run(contextoOpenCode());
 
   assert.strictEqual(item(resultado, 'cli-versao')?.severidade, 'OK');
 });
@@ -848,35 +900,114 @@ test('OpenCode: versao irreconhecivel por semver nao gera aviso algum', async ()
 });
 
 test('abaixoDoPiso: abaixo do piso, no piso, sem piso e versao irreconhecivel', () => {
-  assert.strictEqual(abaixoDoPiso('opencode', '1.17.9'), true);
-  assert.strictEqual(abaixoDoPiso('opencode', ' 1.17.9 '), true);
-  assert.strictEqual(abaixoDoPiso('opencode', '1.18.0'), false);
-  assert.strictEqual(abaixoDoPiso('opencode', '1.18.27'), false);
+  assert.strictEqual(abaixoDoPiso('opencode', '1.18.27'), true);
+  assert.strictEqual(abaixoDoPiso('opencode', ' 1.18.27 '), true);
+  assert.strictEqual(abaixoDoPiso('opencode', '2.0.0'), false);
+  assert.strictEqual(abaixoDoPiso('opencode', '2.0.29'), false);
   assert.strictEqual(abaixoDoPiso('claudecode', '0.1.0'), false);
   assert.strictEqual(abaixoDoPiso('opencode', 'dev-build-xyz'), false);
   assert.strictEqual(abaixoDoPiso('opencode', ''), false);
 });
 
-test('OpenCode: versao vazia e ERRO', async () => {
+test('OpenCode: versao vazia com executavel presente e AVISO nominal, e o lote prossegue', async () => {
   await cenarioFelizOpenCode();
 
   const resultado = await servicoOpenCode('').run(contextoOpenCode());
+  const versao = item(resultado, 'cli-versao');
 
-  assert.strictEqual(item(resultado, 'cli-versao')?.severidade, 'ERRO');
+  assert.strictEqual(versao?.severidade, 'AVISO');
+  assert.strictEqual(
+    versao?.mensagem,
+    'nao foi possivel obter a versao do OpenCode - seguindo sem essa informacao'
+  );
+  assert.strictEqual(resultado.temErro, false);
 });
 
-test('OpenCode: comando ausente em todos os candidatos e ERRO nominal', async () => {
+test('OpenCode: versao vazia com executavel ausente permanece ERRO', async () => {
+  await cenarioFelizOpenCode();
+
+  const resultado = await servicoOpenCode('', {}).run(contextoOpenCode());
+
+  assert.strictEqual(item(resultado, 'cli-versao')?.severidade, 'ERRO');
+  assert.strictEqual(resultado.temErro, true);
+});
+
+test('OpenCode: comando ausente nas tres fontes e ERRO nominal antes de qualquer token', async () => {
   await cenarioFelizOpenCode();
   await fs.remove(path.join(projetoDir, '.opencode', 'command', 'executar-task.md'));
 
-  const resultado = await servicoOpenCode().run(contextoOpenCode());
-  const erro = item(resultado, 'comando-executar-task');
+  const anterior = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = path.join(raiz, 'xdg-vazio');
+  try {
+    const resultado = await semPacote(() => servicoOpenCode().run(contextoOpenCode()));
+    const erro = item(resultado, 'comando-executar-task');
 
-  assert.strictEqual(erro?.severidade, 'ERRO');
-  assert.strictEqual(
-    erro?.mensagem,
-    'comando executar-task nao instalado para OpenCode. Rode: specifica-br init'
+    assert.strictEqual(erro?.severidade, 'ERRO');
+    assert.strictEqual(
+      erro?.mensagem,
+      'comando executar-task nao instalado para OpenCode. Rode: specifica-br init'
+    );
+    assert.strictEqual(resultado.temErro, true);
+  } finally {
+    if (anterior === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = anterior;
+    }
+  }
+});
+
+test('OpenCode: template no projeto e o resolvido, sem aviso de marcadores', async () => {
+  await cenarioFelizOpenCode();
+
+  const resultado = await servicoOpenCode().run(contextoOpenCode());
+  const comando = item(resultado, 'comando-executar-task');
+
+  assert.strictEqual(comando?.severidade, 'OK');
+  assert.ok(comando?.mensagem.includes(path.join(projetoDir, '.opencode', 'command', 'executar-task.md')));
+  assert.strictEqual(item(resultado, 'comando-executar-task-marcadores'), undefined);
+});
+
+test('OpenCode: template apenas no pacote resolve como OK', async () => {
+  await cenarioFelizOpenCode();
+  await fs.remove(path.join(projetoDir, '.opencode', 'command', 'executar-task.md'));
+
+  const anterior = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = path.join(raiz, 'xdg-vazio');
+  try {
+    const resultado = await servicoOpenCode().run(contextoOpenCode());
+    const comando = item(resultado, 'comando-executar-task');
+
+    assert.strictEqual(comando?.severidade, 'OK');
+    assert.ok(comando?.mensagem.includes('executar-task.md'));
+  } finally {
+    if (anterior === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = anterior;
+    }
+  }
+});
+
+test('OpenCode: marcadores no template geram exatamente um aviso nominal', async () => {
+  await cenarioFelizOpenCode();
+  await fs.writeFile(
+    path.join(projetoDir, '.opencode', 'command', 'executar-task.md'),
+    '---\ndescription: t\n---\n\nExecute $ARGUMENTS agora.'
   );
+
+  const resultado = await servicoOpenCode().run(contextoOpenCode());
+  const avisos = resultado.itens.filter(
+    (i) => i.item === 'comando-executar-task-marcadores' && i.severidade === 'AVISO'
+  );
+
+  assert.strictEqual(avisos.length, 1);
+  assert.strictEqual(
+    avisos[0]?.mensagem,
+    'o comando executar-task instalado usa marcadores nao expandidos na execucao em lote - serao entregues literalmente ao modelo'
+  );
+  assert.strictEqual(item(resultado, 'comando-executar-task')?.severidade, 'OK');
+  assert.strictEqual(resultado.temErro, false);
 });
 
 test('OpenCode: opencode.json que nem o JSONC salva e ERRO nominal', async () => {
@@ -1010,7 +1141,7 @@ test('OpenCode: o comando global e procurado na base config, e nao no home', asy
   }
 });
 
-test('OpenCode: o comando no home nao satisfaz a base config do mapeamento', async () => {
+test('OpenCode: o comando no home nao e fonte de CT-053 - vale o pacote', async () => {
   await cenarioFelizOpenCode();
   await fs.remove(path.join(projetoDir, '.opencode', 'command', 'executar-task.md'));
   await fs.ensureDir(path.join(homeDir, 'opencode', 'command'));
@@ -1021,7 +1152,7 @@ test('OpenCode: o comando no home nao satisfaz a base config do mapeamento', asy
   try {
     const resultado = await servicoOpenCode().run(contextoOpenCode());
 
-    assert.strictEqual(item(resultado, 'comando-executar-task')?.severidade, 'ERRO');
+    assert.strictEqual(item(resultado, 'comando-executar-task')?.severidade, 'OK');
   } finally {
     if (anterior === undefined) {
       delete process.env.XDG_CONFIG_HOME;
@@ -1029,4 +1160,73 @@ test('OpenCode: o comando no home nao satisfaz a base config do mapeamento', asy
       process.env.XDG_CONFIG_HOME = anterior;
     }
   }
+});
+
+/** Caminho do template do pacote no modulo compilado, unica fonte fora de projeto e global. */
+const PACOTE_TEMPLATE = path.join(process.cwd(), 'dist', 'boilerplate', 'commands', 'executar-task.md');
+
+/** Executa com o template do pacote temporariamente oculto, para simular ausencia nas tres fontes. */
+async function semPacote<T>(fn: () => Promise<T>): Promise<T> {
+  const backup = `${PACOTE_TEMPLATE}.bak-test`;
+  const existia = await fs.pathExists(PACOTE_TEMPLATE);
+  if (existia) {
+    await fs.move(PACOTE_TEMPLATE, backup, { overwrite: true });
+  }
+  try {
+    return await fn();
+  } finally {
+    if (existia) {
+      await fs.move(backup, PACOTE_TEMPLATE, { overwrite: true });
+    }
+  }
+}
+
+test('OpenCode: MCP falhou gera o aviso nominal de nao conectado', async () => {
+  await cenarioFelizOpenCode();
+  const adapter = fakeAdapter({ versao: '2.0.29', mcpEstado: { context7: 'falhou' } });
+  const runner = fakeRunner({ opencode: '/usr/bin/opencode' });
+
+  const resultado = await servico(runner, adapter, fakeFileService(MAPPING_OPENCODE)).run(contextoOpenCode());
+  const mcp = item(resultado, 'mcp:context7');
+
+  assert.strictEqual(mcp?.severidade, 'AVISO');
+  assert.strictEqual(
+    mcp?.mensagem,
+    'mcp:context7 declarado e nao conectado - a task prosseguira sem ele'
+  );
+});
+
+test('OpenCode: MCP desconhecido gera o aviso nominal de estado nao confirmado', async () => {
+  await cenarioFelizOpenCode();
+  const adapter = fakeAdapter({ versao: '2.0.29', mcpEstado: { context7: 'desconhecido' } });
+  const runner = fakeRunner({ opencode: '/usr/bin/opencode' });
+
+  const resultado = await servico(runner, adapter, fakeFileService(MAPPING_OPENCODE)).run(contextoOpenCode());
+  const mcp = item(resultado, 'mcp:context7');
+
+  assert.strictEqual(mcp?.severidade, 'AVISO');
+  assert.strictEqual(
+    mcp?.mensagem,
+    'nao foi possivel confirmar o estado de mcp:context7 no OpenCode'
+  );
+});
+
+test('OpenCode: MCP conectado e OK sem aviso', async () => {
+  await cenarioFelizOpenCode();
+
+  const resultado = await servicoOpenCode().run(contextoOpenCode());
+  const mcp = item(resultado, 'mcp:context7');
+
+  assert.deepStrictEqual(
+    { severidade: mcp?.severidade, mensagem: mcp?.mensagem },
+    { severidade: 'OK', mensagem: 'mcp:context7 conectado' }
+  );
+});
+
+test('OpenCode: nenhuma mensagem cita mecanismo removido', async () => {
+  await cenarioFelizOpenCode();
+
+  const resultado = await servicoOpenCode().run(contextoOpenCode());
+
+  assert.ok(resultado.itens.every((i) => !i.mensagem.includes('--command') && !i.mensagem.includes('--variant')));
 });

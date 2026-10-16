@@ -63,10 +63,10 @@ test('o arquivo gravado traz o agente allow-all de RF-007 e a forma de injecao',
   });
 
   const conteudo = await fs.readJson(servico!.caminho as string);
-  const agente = conteudo.agent['specifica-executor'];
+  const agente = conteudo.agents['specifica-executor'];
 
-  assert.equal(agente.permission['*'], 'allow');
-  assert.deepEqual(agente.permission.bash, { 'git status': 'allow' });
+  assert.deepEqual(agente.permissions[0], { action: '*', resource: '*', effect: 'allow' });
+  assert.deepEqual(agente.permissions[1], { action: 'shell', resource: 'git status', effect: 'allow' });
   assert.equal('instructions' in conteudo, false);
 
   await fs.remove(home);
@@ -115,7 +115,7 @@ test('regra de --allow nao traduzivel volta como aviso para o cabecalho', async 
   });
 
   assert.deepEqual(avisosDoAllow, [
-    '--allow nao/traduzivel! nao tem equivalente no OpenCode - ignorada',
+    'regra de permissao nao/traduzivel! sem equivalente no OpenCode - ignorada durante o lote',
   ]);
 
   await fs.remove(home);
@@ -241,4 +241,48 @@ test('nenhuma string de cabecalho e montada dentro do comando (RF-005)', () => {
       `o comando nao deveria conter o caractere de moldura ${caractere}`
     );
   }
+});
+
+test('o adapter do OpenCode declara modoDeExecucao processo_privado e o do ClaudeCode declara null (CT-054)', () => {
+  const aberto = montarAdapter({
+    ferramenta: 'opencode',
+    home: os.tmpdir(),
+    onAviso: () => undefined,
+  });
+  assert.equal(aberto.adapter.modoDeExecucao, 'processo_privado');
+
+  const fechado = montarAdapter({
+    ferramenta: 'claudecode',
+    home: os.tmpdir(),
+    onAviso: () => undefined,
+  });
+  assert.equal(fechado.adapter.modoDeExecucao, null);
+});
+
+test('o run_start grava modo_de_execucao so quando o adapter declara (CT-054, RF-008)', () => {
+  const fonte = readFileSync(
+    path.join(raiz, 'src', 'commands', 'executar-tasks.ts'),
+    'utf-8'
+  );
+
+  assert.equal((fonte.match(/modo_de_execucao/g) ?? []).length, 1);
+  assert.ok(fonte.includes('adapter.modoDeExecucao !== null'));
+  assert.ok(
+    !fonte.includes('processo_privado'),
+    'o valor vem do adapter, nunca hardcoded no comando'
+  );
+});
+
+test('nenhuma linha de saida visivel comunica o modo de execucao (RF-008)', () => {
+  const fonte = readFileSync(
+    path.join(raiz, 'src', 'commands', 'executar-tasks.ts'),
+    'utf-8'
+  );
+
+  const abertura = fonte.indexOf('layout.header({');
+  assert.notEqual(abertura, -1);
+  const trechoCabecalho = fonte.slice(abertura, fonte.indexOf('});', abertura));
+  assert.ok(!trechoCabecalho.includes('modo_de_execucao'));
+  assert.ok(!trechoCabecalho.includes('modoDeExecucao'));
+  assert.ok(!/layout\.(message|summary)\([^)]*modo/i.test(fonte));
 });

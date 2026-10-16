@@ -64,6 +64,36 @@ function resultadoDryRun(): TaskResult {
 }
 
 /**
+ * Resultado sintetico de `preparar()` falho (CT-055): a task nao executou, e o
+ * motivo nominal vai para o fluxo de erro. O caminho normal de `end`,
+ * evidencia e `--stop-on-failure` trata o resto.
+ */
+function resultadoPreparacaoFalhada(motivo: string): TaskResult {
+  return {
+    sessionId: '',
+    subtype: 'error',
+    isError: true,
+    exitCode: 1,
+    numTurns: 0,
+    durationMs: 0,
+    durationApiMs: 0,
+    costUsd: 0,
+    model: '',
+    modelosReportados: '',
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    reasoningTokens: null,
+    permissionDenials: null,
+    ferramentasNegadas: null,
+    contabilidadeParcial: false,
+    rawStdout: '',
+    rawStderr: motivo,
+  };
+}
+
+/**
  * Substitui, na linha de `--dry-run`, o posicional que carrega o destilado pela
  * contagem de bytes dele (CT-030). Despejar o destilado inteiro na tela tornaria
  * a linha ilegivel sem acrescentar informacao: o arquivo esta no disco.
@@ -178,6 +208,8 @@ export interface RunnerToolAdapter {
     signal?: AbortSignal
   ): Promise<TaskResult>;
   detectRateLimit(rawOutput: string): boolean;
+  /** CT-055: preparacao unica por lote; ausente nos adapters sem preparacao. */
+  preparar?(): Promise<void>;
 }
 
 /** Subconjunto do `ContextPackService` (task-8) consumido pelo loop. */
@@ -294,6 +326,8 @@ export class TaskRunner {
   private packPath: string | null;
   /** Conteudo do destilado na forma `prompt`; `null` nas demais formas. */
   private packConteudo: string | null = null;
+  /** Motivo nominal da falha de `preparar()`; `null` quando a preparacao passou. */
+  private falhaDePreparacao: string | null = null;
   /** `false` enquanto a construcao corrente ainda nao foi entregue a ferramenta. */
   private packEntregue = false;
   /** Cancelamento do filho da task corrente (RF-024, caso extremo 24). */
@@ -403,6 +437,18 @@ export class TaskRunner {
    */
   public async run(tasks: TaskInfo[]): Promise<RunEndMotivo> {
     const total = tasks.length;
+
+    // Passo 2 da secao 5.1 (CT-055): preparacao unica por lote, antes da
+    // primeira task e antes de qualquer impressao de dry-run. Adapters sem o
+    // metodo (ClaudeCode) seguem no-op. Falha apos preflight aprovado degrada
+    // com aviso nominal e falha cada task, sem abortar o lote.
+    this.falhaDePreparacao = null;
+    try {
+      await this.deps.adapter.preparar?.();
+    } catch (erro) {
+      this.falhaDePreparacao = erro instanceof Error ? erro.message : String(erro);
+      this.deps.layout.message('aviso', this.falhaDePreparacao);
+    }
 
     for (let i = 0; i < tasks.length; i += 1) {
       if (this.encerrado) {
@@ -651,7 +697,9 @@ export class TaskRunner {
     };
 
     let resultado: TaskResult;
-    if (opcoes.dryRun) {
+    if (this.falhaDePreparacao !== null) {
+      resultado = resultadoPreparacaoFalhada(this.falhaDePreparacao);
+    } else if (opcoes.dryRun) {
       const args = this.deps.adapter.buildTaskArgs(entrada);
       this.deps.layout.message(
         'info',
