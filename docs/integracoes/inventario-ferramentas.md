@@ -288,7 +288,7 @@ Frequência de invocação: a CLI é chamada **no máximo duas vezes fora do loo
 |:---|:---|:---|
 | `--tool <slug>` | resolvido | um dos 5 slugs, case-insensitive |
 | `--model <modelo>` | `sonnet` | não vazio |
-| `--effort <nivel>` | `medium` | `low\|medium\|high\|xhigh\|max` |
+| `--effort <nivel>` | `medium` | valor livre: níveis canônicos + variante do provedor (ex.: `default`); recusa `#` e vazio |
 | `--fallback-model <modelo>` | `''` | não vazio quando informado |
 | `--auto-approve` | `false` | — |
 | `--permission-mode <modo>` | `''` | enum de 5 valores |
@@ -335,7 +335,7 @@ A coluna **OpenCode** foi fechada em 01/09/2026 contra o código-fonte da CLI
 | Execução headless | `-p <prompt>` | `opencode run --standalone` com mensagem direta (template do comando `executar-task` lido pela própria integração, sem frontmatter, seguido do caminho da task) | `agent -p <prompt>` | `gemini -p <prompt>` | `?` |
 | Saída estruturada | `--output-format json` | `--format json` (**NDJSON de eventos**) | `--output-format json\|stream-json` | `--output-format json\|stream-json` (`-o`) | `?` |
 | Modelo | `--model <modelo>` | `--model provider/modelo` (`-m`), com sufixo `#variante` quando o esforço difere de `medium` | `--model <modelo>` | `--model <modelo>` | `?` |
-| Nível de esforço | `--effort <nivel>` | sufixo `#variante` no `--model` (sem flag dedicada; recusa do provedor repete a task uma vez sem o sufixo, com aviso) | — | — | `?` |
+| Nível de esforço | `--effort <nivel>` | sufixo `#variante` no `--model` (sem flag dedicada; níveis canônicos têm tradução fixa, qualquer outro valor é repassado verbatim, ex.: `default`; recusa do provedor repete a task uma vez sem o sufixo, com aviso) | — | — | `?` |
 | Sem prompt de permissão | `--permission-mode bypassPermissions` | agente `specifica-executor` com permissão total entregue por `OPENCODE_CONFIG` a partir de `~/.specifica-br/opencode/` + `--agent` e `--auto` | `--force` | `--approval-mode=yolo` (`--yolo` está deprecado) | `?` |
 | Modo de permissão granular | `acceptEdits\|auto\|dontAsk\|manual\|bypassPermissions` | `agents` com `permissions` array; última regra que casa vence e regras de agente são concatenadas depois das globais | `permissions.allow` / `permissions.deny` em config | `--approval-mode` | `?` |
 | Diretórios extras de leitura | `--add-dir <dir>` (repetível) | — (só `external_directory: allow`; `--dir` troca o cwd) | — | `--include-directories` (repetível ou por vírgula) | `?` |

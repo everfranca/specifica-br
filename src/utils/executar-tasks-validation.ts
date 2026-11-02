@@ -44,7 +44,6 @@ export interface ValidatedOptions {
   yes: boolean;
 }
 
-const EFFORT: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CONTEXT_INJECTION: readonly ContextInjection[] = ['prompt', 'instructions'];
 const PERMISSION: readonly PermissionMode[] = [
   'acceptEdits',
@@ -85,25 +84,26 @@ function modeloObrigatorio(valor: unknown): string {
 }
 
 /**
- * Obrigatoriedade e conjunto fechado de `--effort` (RF-011), com a mesma
- * justificativa de `modeloObrigatorio`: ausente lanca a mensagem literal de
- * obrigatoriedade; presente e fora do conjunto, a de valor invalido.
+ * Obrigatoriedade de `--effort` (RF-011), com a mesma justificativa de
+ * `modeloObrigatorio`: ausente lanca a mensagem literal de obrigatoriedade.
+ * O valor e livre: os cinco niveis canonicos tem traducao fixa por ferramenta e
+ * qualquer outro e repassado verbatim como variante do provedor. O unico valor
+ * recusado e o que contem `#`, porque no OpenCode o esforco viaja como sufixo
+ * `#variante` do `--model` e o caractere montaria um identificador invalido.
  */
 function esforcoObrigatorio(valor: unknown): EffortLevel {
-  if (valor === undefined || valor === '') {
+  if (valor === undefined || String(valor).trim() === '') {
     throw new Error(
-      `--effort é obrigatória. Valores aceitos: low, medium, high, xhigh, max. ${EXEMPLO_DE_INVOCACAO}`
+      `--effort é obrigatória. Informe o nível de esforço ou a variante do provedor (ex.: low, medium, high, xhigh, max, default). ${EXEMPLO_DE_INVOCACAO}`
     );
   }
-  const texto = String(valor);
-  for (const item of EFFORT) {
-    if (item === texto) {
-      return item;
-    }
+  const texto = String(valor).trim();
+  if (texto.includes('#')) {
+    throw new Error(
+      `Valor inválido para --effort: ${texto}. O valor não pode conter '#': no OpenCode ele viaja como sufixo #variante do --model.`
+    );
   }
-  throw new Error(
-    `Valor inválido para --effort: ${texto}. Valores aceitos: low, medium, high, xhigh, max.`
-  );
+  return texto;
 }
 
 /**

@@ -43,7 +43,7 @@ const OPCOES_ESPERADAS = [
 const MODELO_AUSENTE =
   '--model é obrigatória. Informe o modelo que a ferramenta deve usar no lote. Exemplo: specifica-br executar-tasks specs/features/minha-feature --model sonnet --effort medium';
 const ESFORCO_AUSENTE =
-  '--effort é obrigatória. Valores aceitos: low, medium, high, xhigh, max. Exemplo: specifica-br executar-tasks specs/features/minha-feature --model sonnet --effort medium';
+  '--effort é obrigatória. Informe o nível de esforço ou a variante do provedor (ex.: low, medium, high, xhigh, max, default). Exemplo: specifica-br executar-tasks specs/features/minha-feature --model sonnet --effort medium';
 
 const BASE = { model: 'sonnet', effort: 'medium' };
 
@@ -69,9 +69,18 @@ test('opcao desconhecida e rejeitada', async () => {
   });
 });
 
-test('--effort fora dos cinco niveis e rejeitado', () => {
-  assert.throws(() => validateOptions({ ...BASE, effort: 'turbo' }));
+test('--effort aceita os cinco niveis canonicos e qualquer variante de provedor (pass-through)', () => {
   assert.equal(validateOptions({ ...BASE, effort: 'xhigh' }).effort, 'xhigh');
+  assert.equal(validateOptions({ ...BASE, effort: 'turbo' }).effort, 'turbo');
+  assert.equal(validateOptions({ ...BASE, effort: 'default' }).effort, 'default');
+});
+
+test('--effort com cerquilha e rejeitado porque corrompe o sufixo #variante do --model', () => {
+  assert.throws(() => validateOptions({ ...BASE, effort: 'de#fault' }), /não pode conter/);
+});
+
+test('--effort com espacos nas bordas e normalizada antes do pass-through', () => {
+  assert.equal(validateOptions({ ...BASE, effort: ' default ' }).effort, 'default');
 });
 
 test('--permission-mode fora dos modos aceitos e rejeitado', () => {
@@ -194,7 +203,7 @@ test('--model e --effort sao declaradas sem default e com a descricao da secao 4
   assert.equal(effort.flags, '--effort <nivel>');
   assert.equal(
     effort.description,
-    'Nivel de esforco (low|medium|high|xhigh|max) (obrigatoria)'
+    'Nivel de esforco ou variante do provedor, repassado verbatim (ex.: low|medium|high|xhigh|max|default) (obrigatoria)'
   );
   assert.equal(effort.defaultValue, undefined);
 });
@@ -241,7 +250,7 @@ function BASE_MAX_WAIT(maxWait: string): Record<string, unknown> {
 }
 
 const VALOR_INVALIDO_EFFORT = (valor: string): string =>
-  `Valor inválido para --effort: ${valor}. Valores aceitos: low, medium, high, xhigh, max.`;
+  `Valor inválido para --effort: ${valor}. O valor não pode conter '#': no OpenCode ele viaja como sufixo #variante do --model.`;
 const TETO_MAX_WAIT = (valor: string): string =>
   `--max-wait aceita no máximo 12h. Valor recebido: ${valor}.`;
 const FORMAS_MAX_WAIT = (valor: string): string =>
@@ -268,12 +277,16 @@ test('--model ausente ou vazia lanca a mensagem literal, caractere a caractere (
 test('--effort ausente lanca a mensagem literal, caractere a caractere (RF-011)', () => {
   assert.equal(mensagemDe(() => validateOptions({ model: 'sonnet' })), ESFORCO_AUSENTE);
   assert.equal(mensagemDe(() => validateOptions({ model: 'sonnet', effort: '' })), ESFORCO_AUSENTE);
+  assert.equal(
+    mensagemDe(() => validateOptions({ model: 'sonnet', effort: '   ' })),
+    ESFORCO_AUSENTE
+  );
 });
 
 test('--effort invalida lanca a mensagem literal, caractere a caractere (RF-011)', () => {
   assert.equal(
-    mensagemDe(() => validateOptions({ ...BASE, effort: 'turbo' })),
-    VALOR_INVALIDO_EFFORT('turbo')
+    mensagemDe(() => validateOptions({ ...BASE, effort: 'de#fault' })),
+    VALOR_INVALIDO_EFFORT('de#fault')
   );
 });
 

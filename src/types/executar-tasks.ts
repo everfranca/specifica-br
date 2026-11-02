@@ -1,6 +1,13 @@
 import type { HeaderStyle, LayoutName, ToolSlug } from './config.js';
 
-export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/**
+ * Esforco do lote. Os cinco niveis canonicos tem traducao fixa por ferramenta;
+ * qualquer outro valor e repassado verbatim como variante do provedor
+ * (ex.: `default`), e a recusa do provedor e tratada pelo mecanismo de
+ * reexecucao sem variante. A intersecao com `string` mantem o autocomplete dos
+ * niveis canonicos sem fechar a uniao.
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | (string & {});
 
 export type PermissionMode = 'acceptEdits' | 'auto' | 'dontAsk' | 'manual' | 'bypassPermissions';
 

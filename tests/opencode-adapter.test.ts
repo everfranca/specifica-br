@@ -276,7 +276,7 @@ test('buildContextPackArgs e CT-032: --standalone, sufixo no --model e prompt no
   ]);
 });
 
-test('o mapeamento de esforco cobre os cinco niveis de CT-031 como sufixo do --model', async () => {
+test('o mapeamento de esforco cobre os cinco niveis de CT-031 e repassa verbatim o que nao e canonico', async () => {
   const { adapter } = await adapterComTemplate();
   const sufixo = (effort: EffortLevel): string | null => {
     const args = adapter.buildTaskArgs(entradaDeTask({ opcoes: opcoesBase({ effort }) }));
@@ -289,6 +289,8 @@ test('o mapeamento de esforco cobre os cinco niveis de CT-031 como sufixo do --m
   assert.equal(sufixo('high'), 'high');
   assert.equal(sufixo('xhigh'), 'high');
   assert.equal(sufixo('max'), 'max');
+  assert.equal(sufixo('default'), 'default');
+  assert.equal(sufixo('turbo'), 'turbo');
 });
 
 test('nenhuma flag da lista de nao emitidos de CT-031 aparece no argv', async () => {
@@ -744,6 +746,24 @@ test('variante recusada na segunda tentativa nao dispara nova reexecucao', async
   assert.equal(resultado.isError, true);
 });
 
+test('variante default recusada por modelo sem ela reexecuta sem sufixo com aviso nominal', async () => {
+  const avisos: string[] = [];
+  const runner = fakeRunner([
+    { exitCode: 1, stdout: '', stderr: 'Variant unavailable for anthropic/claude-opus-5-5: default' },
+    { stdout: NDJSON_UM_PASSO },
+  ]);
+  const { adapter } = await adapterComTemplate({ runner, onAviso: (m) => avisos.push(m) });
+  const entrada = entradaDeTask({ opcoes: opcoesBase({ model: 'anthropic/claude-opus-5-5', effort: 'default' }) });
+
+  const resultado = await adapter.runTask(entrada, '/projeto');
+
+  assert.equal(runner.calls.length, 2);
+  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-opus-5-5#default');
+  assert.equal(modeloDoArgv(runner.calls[1].args), 'anthropic/claude-opus-5-5');
+  assert.deepEqual(avisos, ['esforco default recusado pelo provedor - repetindo task-1.md sem esforco']);
+  assert.equal(resultado.isError, false);
+});
+
 test('falha que consumiu tokens nunca e reexecutada', async () => {
   const runner = fakeRunner([
     { exitCode: 1, stdout: NDJSON_UM_PASSO, stderr: 'variant unsupported' },
@@ -934,7 +954,7 @@ test('criterio 10: argv e registro sintetico V2 nao contem --command nem --varia
   const { adapter } = await adapterComTemplate();
   const varredura: string[] = [];
   const modelos: Record<string, string> = {};
-  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'default'] as const) {
     const args = adapter.buildTaskArgs(entradaDeTask({ opcoes: opcoesBase({ effort }) }));
     varredura.push(args.join(' '));
     modelos[effort] = modeloDoArgv(args);
@@ -954,7 +974,7 @@ test('criterio 10: argv e registro sintetico V2 nao contem --command nem --varia
   assert.equal(tudo.includes('--command'), false, 'saida contem --command');
   assert.equal(tudo.includes('--variant'), false, 'saida contem --variant');
   assert.equal(modelos['medium'].includes('#'), false, 'medium nao viaja com sufixo no --model');
-  for (const effort of ['low', 'high', 'xhigh', 'max'] as const) {
+  for (const effort of ['low', 'high', 'xhigh', 'max', 'default'] as const) {
     assert.ok(modelos[effort].includes('#'), `esforco ${effort} deveria viajar como sufixo no --model`);
   }
 });

@@ -134,7 +134,7 @@ Correção de conteúdo se faz no documento-fonte.
 | `<feature-dir>` | Diretório da feature (1º argumento, obrigatório) | — |
 | `--tool` | Apenas `claude` nesta versão | `claude` |
 | `--model` | `sonnet`, `opus`, … | `sonnet` |
-| `--effort` | `low`\|`medium`\|`high`\|`xhigh`\|`max`. Tokens de *thinking* são cobrados como saída | `medium` |
+| `--effort` | `low`\|`medium`\|`high`\|`xhigh`\|`max` ou variante do provedor repassada verbatim (ex.: `default`). Tokens de *thinking* são cobrados como saída | `medium` |
 | `--fallback-model` | Modelo alternativo quando o primário está indisponível | nenhum |
 | `--auto-approve` | **Acesso total** para as tasks: Read, Write, Bash, Skill e MCP, sem prompt (`--permission-mode bypassPermissions`) | desligado |
 | `--permission-mode` | Sobrescreve o modo acima quando você quer menos que acesso total: `acceptEdits`, `auto`, `dontAsk`, `manual` | conforme `--auto-approve` |
