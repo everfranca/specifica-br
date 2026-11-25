@@ -59,7 +59,8 @@
     "fs-extra": "^11.3.3",
     "latest-version": "^9.0.0",
     "prompts": "^2.4.2",
-    "semver": "^7.7.4"
+    "semver": "^7.7.4",
+    "specifica-br": "file:specifica-br-1.13.0.tgz"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
