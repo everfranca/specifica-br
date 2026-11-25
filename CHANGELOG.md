@@ -3,6 +3,23 @@
 Todas as mudanças relevantes deste projeto são registradas aqui, da versão mais recente para a mais
 antiga.
 
+## 1.13.0
+
+### `--effort` com valor livre (pass-through de variante)
+
+* `executar-tasks` aceita qualquer valor em `--effort`, além dos cinco níveis canônicos
+  (`low`, `medium`, `high`, `xhigh`, `max`): qualquer outro valor é repassado verbatim como
+  variante do provedor. Motivo: modelos expõem variantes que não têm nível canônico correspondente
+  (o GLM 5.3 expõe `Default`; o Opus 5.5, não) e não há como consultar previamente as variantes de
+  cada modelo.
+* No OpenCode, `--effort default` viaja como sufixo `#default` no `--model`. Variante recusada pelo
+  provedor mantém o comportamento já existente: a task é repetida uma única vez sem o sufixo, com
+  aviso nominal, e o lote prossegue.
+* No Claude Code o valor segue cru em `--effort`; quem valida é a própria CLI.
+* A opção continua obrigatória e sem valor padrão; valor vazio ou com `#` é recusado na validação
+  local, porque `#` corromperia a montagem `modelo#variante`.
+* Mensagem de obrigatoriedade reescrita para citar a variante do provedor como forma aceita.
+
 ## 1.12.0
 
 ### Comandos convertidos em skills

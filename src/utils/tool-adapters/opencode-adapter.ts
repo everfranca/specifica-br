@@ -83,8 +83,11 @@ function textoOuNulo(valor: unknown): string | null {
 
 /**
  * Mapeamento de `--effort` para o sufixo `#variante` de `--model` (CT-031).
- * `medium` devolve `null`: nenhum sufixo e anexado e o provedor aplica o
- * proprio padrao.
+ * Os cinco niveis canonicos tem traducao fixa; `medium` devolve `null`: nenhum
+ * sufixo e anexado e o provedor aplica o proprio padrao. Qualquer outro valor e
+ * repassado verbatim como variante do provedor (ex.: `default`) — quem valida a
+ * existencia da variante e o provedor, e a recusa cai na reexecucao unica sem
+ * sufixo (RF-009).
  */
 function mapearEsforco(effort: EffortLevel): string | null {
   switch (effort) {
@@ -98,10 +101,8 @@ function mapearEsforco(effort: EffortLevel): string | null {
       return 'high';
     case 'max':
       return 'max';
-    default: {
-      const _exaustivo: never = effort;
-      return _exaustivo;
-    }
+    default:
+      return effort;
   }
 }
 

@@ -142,6 +142,12 @@ test('buildTaskArgs produz a ordem estavel de CT-020', () => {
   ]);
 });
 
+test('buildTaskArgs repassa verbatim esforco fora dos cinco niveis canonicos', () => {
+  const adapter = new ClaudeCodeAdapter(fakeRunner({}) as never);
+  const args = adapter.buildTaskArgs(entrada({ opcoes: opcoesBase({ effort: 'default' }) }));
+  assert.equal(args[args.indexOf('--effort') + 1], 'default');
+});
+
 test('buildTaskArgs omite --max-budget-usd quando 0', () => {
   const adapter = new ClaudeCodeAdapter(fakeRunner({}) as never);
   const semBudget = adapter.buildTaskArgs(entrada({ opcoes: opcoesBase({ maxBudgetUsd: 0 }) }));

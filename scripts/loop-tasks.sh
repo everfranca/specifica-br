@@ -24,9 +24,10 @@
 #   --tool claude            Ferramenta de IA. Apenas `claude` nesta versao.
 #   --model <modelo>         Modelo (default: sonnet). Ex.: sonnet, opus.
 #   --effort <nivel>         Esforco de raciocinio: low|medium|high|xhigh|max
-#                            (default: medium). Tokens de thinking sao
-#                            cobrados como OUTPUT - este e um dos maiores
-#                            multiplicadores de consumo.
+#                            ou variante do provedor repassada verbatim
+#                            (ex.: default). (default: medium). Tokens de
+#                            thinking sao cobrados como OUTPUT - este e um dos
+#                            maiores multiplicadores de consumo.
 #   --fallback-model <m>     Modelo de fallback quando o primario esta
 #                            indisponivel/sobrecarregado (default: nenhum).
 #   --auto-approve           ACESSO TOTAL para a task: leitura, escrita, Bash,
