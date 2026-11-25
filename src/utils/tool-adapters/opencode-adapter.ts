@@ -82,33 +82,13 @@ function textoOuNulo(valor: unknown): string | null {
 }
 
 /**
- * Mapeamento de `--effort` para o sufixo `#variante` de `--model` (CT-031).
- * Os cinco niveis canonicos tem traducao fixa; `medium` devolve `null`: nenhum
- * sufixo e anexado e o provedor aplica o proprio padrao. Qualquer outro valor e
- * repassado verbatim como variante do provedor (ex.: `default`) — quem valida a
- * existencia da variante e o provedor, e a recusa cai na reexecucao unica sem
- * sufixo (RF-009).
+ * Sufixo `#variante` de `--model` (CT-031): o valor de `--effort` e anexado
+ * literal, sem traducao, para qualquer nivel. Quem valida a existencia da
+ * variante e o provedor, e a recusa cai na reexecucao unica sem sufixo (RF-009).
+ * Com a variante desabilitada, nenhum sufixo e anexado.
  */
-function mapearEsforco(effort: EffortLevel): string | null {
-  switch (effort) {
-    case 'low':
-      return 'minimal';
-    case 'medium':
-      return null;
-    case 'high':
-      return 'high';
-    case 'xhigh':
-      return 'high';
-    case 'max':
-      return 'max';
-    default:
-      return effort;
-  }
-}
-
 function modeloComSufixo(modelo: string, effort: EffortLevel, varianteDesabilitada: boolean): string {
-  const variante = varianteDesabilitada ? null : mapearEsforco(effort);
-  return variante === null ? modelo : `${modelo}#${variante}`;
+  return varianteDesabilitada ? modelo : `${modelo}#${effort}`;
 }
 
 /**
@@ -638,7 +618,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     signal?: AbortSignal
   ): Promise<TaskResult> {
     this.arquivoDaTaskCorrente = path.basename(entrada.taskPath);
-    const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.opcoes.effort);
+    const variante = this.varianteDesabilitada ? null : entrada.opcoes.effort;
 
     const resultado = await this.executar(
       this.buildTaskArgs(entrada),
@@ -680,7 +660,7 @@ export class OpenCodeAdapter implements ToolAdapter {
     timeoutMs?: number
   ): Promise<TaskResult> {
     this.arquivoDaTaskCorrente = path.basename(entrada.featureDir);
-    const variante = this.varianteDesabilitada ? null : mapearEsforco(entrada.packEffort);
+    const variante = this.varianteDesabilitada ? null : entrada.packEffort;
 
     const resultado = await this.executar(
       this.buildContextPackArgs(prompt, entrada),

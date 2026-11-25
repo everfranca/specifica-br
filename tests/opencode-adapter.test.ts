@@ -187,7 +187,7 @@ test('buildTaskArgs produz a ordem exata de CT-031', async () => {
     '--format',
     'json',
     '--model',
-    'anthropic/claude-sonnet-4-5',
+    'anthropic/claude-sonnet-4-5#medium',
     '--agent',
     'specifica-executor',
     '--auto',
@@ -268,7 +268,7 @@ test('buildContextPackArgs e CT-032: --standalone, sufixo no --model e prompt no
     '--format',
     'json',
     '--model',
-    'anthropic/claude-haiku-4-5#minimal',
+    'anthropic/claude-haiku-4-5#low',
     '--agent',
     'specifica-executor',
     '--auto',
@@ -276,21 +276,20 @@ test('buildContextPackArgs e CT-032: --standalone, sufixo no --model e prompt no
   ]);
 });
 
-test('o mapeamento de esforco cobre os cinco niveis de CT-031 e repassa verbatim o que nao e canonico', async () => {
+test('o sufixo de esforco e literal para qualquer nivel, inclusive medium', async () => {
   const { adapter } = await adapterComTemplate();
-  const sufixo = (effort: EffortLevel): string | null => {
+  const sufixo = (effort: EffortLevel): string => {
     const args = adapter.buildTaskArgs(entradaDeTask({ opcoes: opcoesBase({ effort }) }));
-    const modelo = args[args.indexOf('--model') + 1];
-    return modelo.includes('#') ? modelo.split('#')[1] : null;
+    return args[args.indexOf('--model') + 1];
   };
 
-  assert.equal(sufixo('low'), 'minimal');
-  assert.equal(sufixo('medium'), null);
-  assert.equal(sufixo('high'), 'high');
-  assert.equal(sufixo('xhigh'), 'high');
-  assert.equal(sufixo('max'), 'max');
-  assert.equal(sufixo('default'), 'default');
-  assert.equal(sufixo('turbo'), 'turbo');
+  assert.equal(sufixo('low'), 'anthropic/claude-sonnet-4-5#low');
+  assert.equal(sufixo('medium'), 'anthropic/claude-sonnet-4-5#medium');
+  assert.equal(sufixo('high'), 'anthropic/claude-sonnet-4-5#high');
+  assert.equal(sufixo('xhigh'), 'anthropic/claude-sonnet-4-5#xhigh');
+  assert.equal(sufixo('max'), 'anthropic/claude-sonnet-4-5#max');
+  assert.equal(sufixo('default'), 'anthropic/claude-sonnet-4-5#default');
+  assert.equal(sufixo('turbo'), 'anthropic/claude-sonnet-4-5#turbo');
 });
 
 test('nenhuma flag da lista de nao emitidos de CT-031 aparece no argv', async () => {
@@ -794,13 +793,24 @@ test('falha sem citacao de variante nao e reexecutada', async () => {
   assert.equal(runner.calls.length, 1);
 });
 
-test('esforco medium nao dispara reexecucao porque nenhum sufixo foi enviado', async () => {
-  const runner = fakeRunner([FALHA_DE_VARIANTE, { stdout: NDJSON_UM_PASSO }]);
-  const { adapter } = await adapterComTemplate({ runner });
+test('esforco medium recusado pelo provedor reexecuta uma unica vez sem o sufixo', async () => {
+  const avisos: string[] = [];
+  const runner = fakeRunner([
+    { exitCode: 1, stdout: '', stderr: 'Variant unavailable for anthropic/claude-sonnet-4-5: medium' },
+    { stdout: NDJSON_UM_PASSO },
+  ]);
+  const { adapter } = await adapterComTemplate({ runner, onAviso: (m) => avisos.push(m) });
 
-  await adapter.runTask(entradaDeTask({ opcoes: opcoesBase({ effort: 'medium' }) }), '/projeto');
+  const resultado = await adapter.runTask(
+    entradaDeTask({ opcoes: opcoesBase({ effort: 'medium' }) }),
+    '/projeto'
+  );
 
-  assert.equal(runner.calls.length, 1);
+  assert.equal(runner.calls.length, 2);
+  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-sonnet-4-5#medium');
+  assert.equal(modeloDoArgv(runner.calls[1].args), 'anthropic/claude-sonnet-4-5');
+  assert.deepEqual(avisos, ['esforco medium recusado pelo provedor - repetindo task-1.md sem esforco']);
+  assert.equal(resultado.isError, false);
 });
 
 test('runPack tambem reexecuta uma unica vez sem o sufixo', async () => {
@@ -811,7 +821,7 @@ test('runPack tambem reexecuta uma unica vez sem o sufixo', async () => {
   const resultado = await adapter.runPack('PROMPT', entradaDePack(), '/projeto');
 
   assert.equal(runner.calls.length, 2);
-  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-haiku-4-5#minimal');
+  assert.equal(modeloDoArgv(runner.calls[0].args), 'anthropic/claude-haiku-4-5#low');
   assert.equal(modeloDoArgv(runner.calls[1].args), 'anthropic/claude-haiku-4-5');
   assert.deepEqual(avisos, ['esforco low recusado pelo provedor - repetindo exemplo sem esforco']);
   assert.equal(resultado.isError, false);
@@ -950,7 +960,7 @@ test('fixture de mcp list: o glifo nunca decide o status, so o vocabulario liter
   assert.equal(status.get('com-visto'), 'AVISO');
 });
 
-test('criterio 10: argv e registro sintetico V2 nao contem --command nem --variant; sufixo so fora de medium', async () => {
+test('criterio 10: argv e registro sintetico V2 nao contem --command nem --variant; todo esforco viaja como sufixo literal', async () => {
   const { adapter } = await adapterComTemplate();
   const varredura: string[] = [];
   const modelos: Record<string, string> = {};
@@ -973,8 +983,11 @@ test('criterio 10: argv e registro sintetico V2 nao contem --command nem --varia
   assert.ok(tudo.length > 0, 'a varredura precisa ter conteudo para o teste ter valor');
   assert.equal(tudo.includes('--command'), false, 'saida contem --command');
   assert.equal(tudo.includes('--variant'), false, 'saida contem --variant');
-  assert.equal(modelos['medium'].includes('#'), false, 'medium nao viaja com sufixo no --model');
-  for (const effort of ['low', 'high', 'xhigh', 'max', 'default'] as const) {
-    assert.ok(modelos[effort].includes('#'), `esforco ${effort} deveria viajar como sufixo no --model`);
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'default'] as const) {
+    assert.equal(
+      modelos[effort],
+      `anthropic/claude-sonnet-4-5#${effort}`,
+      `esforco ${effort} deveria viajar literal como sufixo no --model`
+    );
   }
 });

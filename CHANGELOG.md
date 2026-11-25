@@ -3,6 +3,19 @@
 Todas as mudanças relevantes deste projeto são registradas aqui, da versão mais recente para a mais
 antiga.
 
+## Próxima versão
+
+### `--effort` literal no OpenCode
+
+* O valor de `--effort` passa a viajar como sufixo `#<valor>` do `--model` sem tradução, para qualquer
+  nível: `low` vira `#low` (antes `#minimal`), `xhigh` vira `#xhigh` (antes `#high`) e `medium` vira
+  `#medium` (antes ia sem sufixo). O valor digitado é o que chega à ferramenta.
+* Variante recusada pelo provedor mantém o comportamento já existente: a task é repetida uma única vez
+  sem o sufixo, com aviso nominal, e o lote prossegue sem sufixo. Por isso, em provedores que não
+  expõem a variante `medium` (ex.: `zai-coding-plan/glm-5.4`), `--effort medium` gasta uma tentativa
+  recusada, sem consumo de tokens, antes de seguir sem esforço.
+* No Claude Code nada muda: o valor já seguia cru em `--effort`.
+
 ## 1.13.0
 
 ### `--effort` com valor livre (pass-through de variante)

@@ -2216,7 +2216,7 @@ test('criterio 10: dry-run e registro do lote OpenCode nao contem --command nem 
   assert.equal(registro.includes('--variant'), false, 'registro contem --variant');
 });
 
-test('sufixo de variante no dry-run aparece apenas com esforco diferente de medium', async () => {
+test('sufixo de variante no dry-run e literal para qualquer esforco', async () => {
   const modeloDaLinha = async (effort: 'medium' | 'high'): Promise<string> => {
     const tasks = await criarTasks([{ numero: 1, done: false }]);
     const { runner, layout } = montar({
@@ -2228,7 +2228,7 @@ test('sufixo de variante no dry-run aparece apenas com esforco diferente de medi
           '--format',
           'json',
           '--model',
-          effort === 'medium' ? 'zai/glm-4.6' : 'zai/glm-4.6#high',
+          `zai/glm-4.6#${effort}`,
           '--agent',
           'specifica-executor',
           '--auto',
@@ -2246,6 +2246,6 @@ test('sufixo de variante no dry-run aparece apenas com esforco diferente de medi
     return casou[1];
   };
 
-  assert.equal(await modeloDaLinha('medium'), 'zai/glm-4.6');
-  assert.ok((await modeloDaLinha('high')).includes('#high'));
+  assert.equal(await modeloDaLinha('medium'), 'zai/glm-4.6#medium');
+  assert.equal(await modeloDaLinha('high'), 'zai/glm-4.6#high');
 });
